@@ -50,12 +50,12 @@ export function Modal({
             className
           )}
         >
-          <Dialog.Title className={cn("ws-display text-[19px] text-white", hideTitle && "sr-only")}>
+          <Dialog.Title className={cn("ws-display text-fg text-[19px]", hideTitle && "sr-only")}>
             {title}
           </Dialog.Title>
 
           {description ? (
-            <Dialog.Description className="mt-1.5 text-[13px] font-normal text-white/55">
+            <Dialog.Description className="text-fg/55 mt-1.5 text-[13px] font-normal">
               {description}
             </Dialog.Description>
           ) : null}

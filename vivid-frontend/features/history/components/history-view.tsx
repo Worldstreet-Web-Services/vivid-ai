@@ -88,7 +88,7 @@ export function HistoryView({ entries }: { entries: HistoryEntry[] }) {
         <div className="relative min-w-[220px] flex-1">
           <SearchIcon
             size={16}
-            className="pointer-events-none absolute top-1/2 left-3.5 -translate-y-1/2 text-white/35"
+            className="text-fg/35 pointer-events-none absolute top-1/2 left-3.5 -translate-y-1/2"
           />
           <Input
             value={query}
@@ -138,8 +138,8 @@ export function HistoryView({ entries }: { entries: HistoryEntry[] }) {
       {total === 0 ? (
         <div className="vd-glass-card vd-sheen mt-6 grid place-items-center px-5 py-16 text-center">
           <div className="max-w-[38ch]">
-            <p className="text-[14px] font-semibold text-white/85">Nothing matches that</p>
-            <p className="mt-1.5 text-[12.5px] font-normal text-white/50">
+            <p className="text-fg/85 text-[14px] font-semibold">Nothing matches that</p>
+            <p className="text-fg/50 mt-1.5 text-[12.5px] font-normal">
               {debounced.trim()
                 ? `No session matches "${debounced.trim()}". Try a different search or clear the filter.`
                 : "Your sessions will show up here as you use Vivid."}
@@ -150,7 +150,7 @@ export function HistoryView({ entries }: { entries: HistoryEntry[] }) {
         <div className="mt-6 flex flex-col gap-7">
           {groups.map((group) => (
             <section key={group.label}>
-              <h2 className="mb-2.5 text-[11.5px] font-semibold tracking-wide text-white/40 uppercase">
+              <h2 className="text-fg/40 mb-2.5 text-[11.5px] font-semibold tracking-wide uppercase">
                 {group.label}
               </h2>
 
@@ -163,7 +163,7 @@ export function HistoryView({ entries }: { entries: HistoryEntry[] }) {
                       key={entry.id}
                       className={cn(
                         "vd-glass-card vd-sheen vd-glass-hover group flex items-center gap-3 rounded-[18px] p-3.5",
-                        on && "border-white/45 bg-white/12"
+                        on && "border-fg/45 bg-fg/12"
                       )}
                     >
                       <button
@@ -174,7 +174,7 @@ export function HistoryView({ entries }: { entries: HistoryEntry[] }) {
                         onClick={() => toggle(entry.id)}
                         className={cn(
                           "grid size-9 shrink-0 cursor-pointer place-items-center rounded-[12px] transition-colors",
-                          on ? "bg-white text-black" : "vd-glass-control text-white/70"
+                          on ? "bg-fg text-fg-invert" : "vd-glass-control text-fg/70"
                         )}
                       >
                         {on ? <CheckIcon size={16} /> : <Icon size={16} />}
@@ -184,21 +184,21 @@ export function HistoryView({ entries }: { entries: HistoryEntry[] }) {
                         href={`/thread/${entry.id}`}
                         className="flex min-w-0 flex-1 flex-col gap-0.5"
                       >
-                        <span className="truncate text-[13.5px] font-semibold text-white">
+                        <span className="text-fg truncate text-[13.5px] font-semibold">
                           {entry.title}
                         </span>
-                        <span className="truncate text-[12px] font-normal text-white/45">
+                        <span className="text-fg/45 truncate text-[12px] font-normal">
                           {entry.preview}
                         </span>
                       </Link>
 
                       <div className="flex shrink-0 items-center gap-3">
                         {entry.space ? (
-                          <span className="hidden rounded-full bg-white/8 px-2.5 py-1 text-[11px] font-medium text-white/50 sm:block">
+                          <span className="bg-fg/8 text-fg/50 hidden rounded-full px-2.5 py-1 text-[11px] font-medium sm:block">
                             {entry.space}
                           </span>
                         ) : null}
-                        <span className="text-[11.5px] font-normal text-white/35">
+                        <span className="text-fg/35 text-[11.5px] font-normal">
                           {relativeTime(new Date(entry.updatedAt))}
                         </span>
                       </div>

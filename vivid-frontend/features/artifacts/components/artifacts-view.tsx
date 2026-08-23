@@ -53,8 +53,8 @@ export function ArtifactsView({ artifacts }: { artifacts: Artifact[] }) {
             {shown.length === 0 ? (
               <div className="vd-glass-card vd-sheen grid place-items-center px-5 py-16 text-center">
                 <div className="max-w-[36ch]">
-                  <p className="text-[14px] font-semibold text-white/85">Nothing here yet</p>
-                  <p className="mt-1.5 text-[12.5px] font-normal text-white/50">
+                  <p className="text-fg/85 text-[14px] font-semibold">Nothing here yet</p>
+                  <p className="text-fg/50 mt-1.5 text-[12.5px] font-normal">
                     Ask Vivid to generate something and it will show up here.
                   </p>
                 </div>
@@ -131,10 +131,10 @@ export function ArtifactsView({ artifacts }: { artifacts: Artifact[] }) {
             )}
 
             <div className="vd-glass-well rounded-[16px] p-4">
-              <p className="text-[11.5px] font-semibold tracking-wide text-white/40 uppercase">
+              <p className="text-fg/40 text-[11.5px] font-semibold tracking-wide uppercase">
                 Prompt
               </p>
-              <p className="mt-1.5 text-[13px] leading-relaxed font-normal text-white/70">
+              <p className="text-fg/70 mt-1.5 text-[13px] leading-relaxed font-normal">
                 {open.prompt}
               </p>
             </div>

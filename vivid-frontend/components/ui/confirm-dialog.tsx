@@ -42,10 +42,8 @@ export function ConfirmDialog({
             "transition-all duration-200 data-ending-style:scale-[0.97] data-ending-style:opacity-0 data-starting-style:scale-[0.97] data-starting-style:opacity-0"
           )}
         >
-          <AlertDialog.Title className="ws-display text-[17px] text-white">
-            {title}
-          </AlertDialog.Title>
-          <AlertDialog.Description className="mt-2 text-[13px] leading-relaxed font-normal text-white/55">
+          <AlertDialog.Title className="ws-display text-fg text-[17px]">{title}</AlertDialog.Title>
+          <AlertDialog.Description className="text-fg/55 mt-2 text-[13px] leading-relaxed font-normal">
             {description}
           </AlertDialog.Description>
 

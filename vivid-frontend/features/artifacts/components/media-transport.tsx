@@ -56,7 +56,7 @@ export function MediaTransport({ duration, visual }: MediaTransportProps) {
           {playing ? <PauseIcon size={16} /> : <PlayIcon size={16} />}
         </Button>
 
-        <span className="tnum shrink-0 text-[12px] font-medium text-white/60">
+        <span className="tnum text-fg/60 shrink-0 text-[12px] font-medium">
           {formatDuration(position)}
         </span>
 
@@ -76,13 +76,13 @@ export function MediaTransport({ duration, visual }: MediaTransportProps) {
             className="vd-glass-well peer-focus-visible:outline-ring block h-1.5 overflow-hidden rounded-full peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2"
           >
             <span
-              className="block h-full rounded-full bg-white/75 transition-[width] duration-200"
+              className="bg-fg/75 block h-full rounded-full transition-[width] duration-200"
               style={{ width: `${pct}%` }}
             />
           </span>
         </label>
 
-        <span className="tnum shrink-0 text-[12px] font-medium text-white/35">
+        <span className="tnum text-fg/35 shrink-0 text-[12px] font-medium">
           {formatDuration(duration)}
         </span>
 

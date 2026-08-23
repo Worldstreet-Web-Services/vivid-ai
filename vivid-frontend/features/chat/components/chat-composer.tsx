@@ -51,7 +51,7 @@ export function ChatComposer({
       }}
       className={cn(
         "vd-glass-card vd-sheen w-full px-3.5 pt-3 pb-2.5 transition-colors",
-        focused && "border-white/25",
+        focused && "border-fg/25",
         className
       )}
     >
@@ -77,7 +77,7 @@ export function ChatComposer({
             submit();
           }
         }}
-        className="max-h-[220px] w-full resize-none bg-transparent font-sans text-[15px] font-normal text-white outline-none"
+        className="text-fg max-h-[220px] w-full resize-none bg-transparent font-sans text-[15px] font-normal outline-none"
       />
 
       <div className="mt-2 flex items-center gap-1.5">
@@ -88,16 +88,16 @@ export function ChatComposer({
         <ComposerButton label="Search the web" className="gap-1.5 px-2.5">
           <SearchIcon size={16} />
           <span className="text-[12.5px] font-semibold">Search</span>
-          <ChevronDownIcon size={14} className="text-white/40" />
+          <ChevronDownIcon size={14} className="text-fg/40" />
         </ComposerButton>
 
         <div className="ml-auto flex items-center gap-1.5">
           <button
             type="button"
-            className="hover:vd-glass-control flex h-8 cursor-pointer items-center gap-1 rounded-full px-2.5 text-[12.5px] font-medium text-white/55 transition-colors hover:text-white"
+            className="hover:vd-glass-control text-fg/55 hover:text-fg flex h-8 cursor-pointer items-center gap-1 rounded-full px-2.5 text-[12.5px] font-medium transition-colors"
           >
             {model}
-            <ChevronDownIcon size={14} className="text-white/40" />
+            <ChevronDownIcon size={14} className="text-fg/40" />
           </button>
 
           <ComposerButton label="Dictate">
@@ -132,7 +132,7 @@ function ComposerButton({
       type="button"
       aria-label={label}
       className={cn(
-        "hover:vd-glass-control flex h-8 cursor-pointer items-center justify-center rounded-full px-2 text-white/55 transition-colors hover:text-white",
+        "hover:vd-glass-control text-fg/55 hover:text-fg flex h-8 cursor-pointer items-center justify-center rounded-full px-2 transition-colors",
         className
       )}
     >

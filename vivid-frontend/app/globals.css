@@ -59,6 +59,21 @@
   --color-destructive: #ef4444;
 }
 
+/* Foreground, its inverse, and the page beneath the glass.
+   Components use these (text-fg, bg-fg/10, border-fg/12, ring-page) rather than
+   text-white or bg-black, so a theme swap moves the type with the surfaces
+   instead of leaving white text on a white card.
+
+   Deliberately NOT in the `@theme inline` block above. `inline` substitutes the
+   literal value into every utility, which compiles `.text-fg` to `color: #fff`
+   and makes the value impossible to override at runtime. A plain `@theme`
+   emits `color: var(--color-fg)`, so the light block below can move it. */
+@theme {
+  --color-fg: #ffffff;
+  --color-fg-invert: #0a0a0a;
+  --color-page: #000000;
+}
+
 body {
   background: #000;
   color: #fff;
@@ -355,4 +370,168 @@ body {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* ---------------------------------------------------------------------------
+   LIGHT THEME
+   ---------------------------------------------------------------------------
+   Built from the same greyscale as the dark theme rather than from a second
+   palette: grey-100..900 run the other way, and the glass tiers invert from
+   white-on-dark to dark-on-light. Nothing new is introduced, so the two themes
+   cannot drift apart.
+
+   Selected by data-theme="light" on the root, which the appearance setting
+   sets. The default with no attribute is dark, because that is the brand.
+   ------------------------------------------------------------------------ */
+:root[data-theme="light"] {
+  --color-accent: #52525b;
+  --color-ink: #fafafa;
+  --color-arrow: #6b6b72;
+  --color-panel: #f7f7f8;
+  --color-sheet: #ffffff;
+
+  --color-up: #0f7a4f;
+  --color-up-ink: #eafff4;
+  --color-down: #b3261e;
+  --color-down-ink: #fff1f0;
+
+  --color-primary: #18181b;
+  --color-primary-foreground: #fafafa;
+  --color-foreground: #18181b;
+  --color-background: #ffffff;
+  --color-input: #d4d4d8;
+  --color-ring: #52525b;
+
+  --color-fg: #18181b;
+  --color-fg-invert: #fafafa;
+  --color-page: #f2f2f4;
+}
+
+:root[data-theme="light"] body {
+  background: #f2f2f4;
+  color: #18181b;
+}
+
+:root[data-theme="light"] ::selection {
+  background: rgba(0, 0, 0, 0.18);
+  color: #18181b;
+}
+
+:root[data-theme="light"] ::placeholder {
+  color: rgba(0, 0, 0, 0.4);
+}
+
+/* The glass inverts: a dark tint over a light page, with the specular line
+   still along the top edge. The blur and saturation are unchanged, because
+   those are what make it glass rather than a tinted box. */
+:root[data-theme="light"] {
+  .vd-glass,
+  .vd-glass-control,
+  .vd-glass-card,
+  .vd-glass-sheet {
+    background-color: rgba(255, 255, 255, 0.72);
+    background-image: linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.9) 0%,
+      rgba(255, 255, 255, 0.35) 100%
+    );
+    border-color: rgba(0, 0, 0, 0.1);
+  }
+
+  .vd-glass {
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.9),
+      0 8px 28px rgba(0, 0, 0, 0.1);
+  }
+
+  .vd-glass-control {
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.95),
+      0 2px 10px rgba(0, 0, 0, 0.08);
+  }
+
+  .vd-glass-card {
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.9),
+      0 10px 34px rgba(0, 0, 0, 0.1);
+  }
+
+  .vd-glass-sheet {
+    background-color: rgba(255, 255, 255, 0.86);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 1),
+      0 24px 70px rgba(0, 0, 0, 0.22);
+  }
+
+  .vd-glass-bright {
+    background-color: rgba(24, 24, 27, 0.94);
+    background-image: linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.16) 0%,
+      rgba(255, 255, 255, 0) 100%
+    );
+    border-color: rgba(0, 0, 0, 0.5);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.22),
+      0 2px 14px rgba(0, 0, 0, 0.2);
+    color: #fafafa;
+
+    &:hover {
+      background-color: rgba(0, 0, 0, 1);
+    }
+  }
+
+  .vd-glass-well {
+    background-color: rgba(0, 0, 0, 0.045);
+    border-color: rgba(0, 0, 0, 0.1);
+    box-shadow:
+      inset 0 1px 2px rgba(0, 0, 0, 0.08),
+      inset 0 -1px 0 rgba(255, 255, 255, 0.8);
+  }
+
+  .vd-sheen::before {
+    background: linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.5) 0%,
+      rgba(255, 255, 255, 0.08) 42%,
+      transparent 60%
+    );
+  }
+
+  .vd-glass-hover:hover {
+    border-color: rgba(0, 0, 0, 0.2);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 1),
+      0 12px 38px rgba(0, 0, 0, 0.14);
+  }
+}
+
+/* The light behind the glass. Inverts with the theme: bright pools on black,
+   soft shadow pools on the light page. */
+@utility vd-ambient {
+  background-image:
+    radial-gradient(
+      72% 58% at 50% 16%,
+      rgba(255, 255, 255, 0.24),
+      rgba(255, 255, 255, 0.07) 44%,
+      transparent 74%
+    ),
+    radial-gradient(44% 52% at 0% 36%, rgba(202, 214, 240, 0.2), transparent 70%),
+    radial-gradient(48% 50% at 100% 86%, rgba(242, 235, 224, 0.16), transparent 72%),
+    radial-gradient(76% 30% at 50% 100%, rgba(255, 255, 255, 0.08), transparent 76%),
+    radial-gradient(140% 105% at 50% 14%, transparent 60%, rgba(0, 0, 0, 0.38) 100%);
+}
+
+:root[data-theme="light"] .vd-ambient {
+  background-image:
+    radial-gradient(
+      72% 58% at 50% 16%,
+      rgba(255, 255, 255, 0.9),
+      rgba(255, 255, 255, 0.4) 44%,
+      transparent 74%
+    ),
+    radial-gradient(44% 52% at 0% 36%, rgba(140, 158, 196, 0.16), transparent 70%),
+    radial-gradient(48% 50% at 100% 86%, rgba(186, 170, 148, 0.14), transparent 72%),
+    radial-gradient(76% 30% at 50% 100%, rgba(0, 0, 0, 0.05), transparent 76%),
+    radial-gradient(140% 105% at 50% 14%, transparent 62%, rgba(0, 0, 0, 0.09) 100%);
 }

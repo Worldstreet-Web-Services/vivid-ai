@@ -69,8 +69,8 @@ export function ReportDialog({ open, onOpenChange }: ReportDialogProps) {
                 key={option.value}
                 className={cn(
                   "vd-glass-control vd-sheen flex cursor-pointer items-center gap-3 rounded-[14px] px-3.5 py-3",
-                  "transition-colors hover:border-white/28",
-                  on && "border-white/45 bg-white/14"
+                  "hover:border-fg/28 transition-colors",
+                  on && "border-fg/45 bg-fg/14"
                 )}
               >
                 <input
@@ -88,12 +88,12 @@ export function ReportDialog({ open, onOpenChange }: ReportDialogProps) {
                   aria-hidden="true"
                   className={cn(
                     "grid size-4 shrink-0 place-items-center rounded-full border transition-colors",
-                    on ? "border-white bg-white" : "border-white/30"
+                    on ? "border-fg bg-fg" : "border-fg/30"
                   )}
                 >
-                  {on ? <span className="size-1.5 rounded-full bg-black" /> : null}
+                  {on ? <span className="bg-fg-invert size-1.5 rounded-full" /> : null}
                 </span>
-                <span className="text-[13px] font-medium text-white/85">{option.label}</span>
+                <span className="text-fg/85 text-[13px] font-medium">{option.label}</span>
               </label>
             );
           })}
@@ -106,8 +106,8 @@ export function ReportDialog({ open, onOpenChange }: ReportDialogProps) {
         ) : null}
 
         <div className="flex flex-col gap-2">
-          <label htmlFor="report-detail" className="text-[13px] font-semibold text-white/85">
-            Anything else? <span className="font-normal text-white/40">Optional</span>
+          <label htmlFor="report-detail" className="text-fg/85 text-[13px] font-semibold">
+            Anything else? <span className="text-fg/40 font-normal">Optional</span>
           </label>
           <Textarea
             id="report-detail"

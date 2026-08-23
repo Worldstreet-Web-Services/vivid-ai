@@ -21,18 +21,18 @@ export function ArtifactSurface({
   return (
     <div
       className={cn(
-        "relative grid place-items-center overflow-hidden rounded-[16px] border border-white/10",
+        "border-fg/10 relative grid place-items-center overflow-hidden rounded-[16px] border",
         className
       )}
       style={{
         backgroundImage: `linear-gradient(155deg, ${artifact.tint[0]} 0%, ${artifact.tint[1]} 100%)`,
       }}
     >
-      <span className="vd-glass-control grid size-11 place-items-center rounded-full text-white/80">
+      <span className="vd-glass-control text-fg/80 grid size-11 place-items-center rounded-full">
         <Icon size={18} />
       </span>
       {artifact.duration ? (
-        <span className="vd-glass-control absolute right-2.5 bottom-2.5 rounded-full px-2 py-0.5 text-[11px] font-semibold text-white/85">
+        <span className="vd-glass-control text-fg/85 absolute right-2.5 bottom-2.5 rounded-full px-2 py-0.5 text-[11px] font-semibold">
           {formatDuration(artifact.duration)}
         </span>
       ) : null}
@@ -49,8 +49,8 @@ export function ArtifactTile({ artifact, onOpen }: { artifact: Artifact; onOpen:
     >
       <ArtifactSurface artifact={artifact} className="aspect-[4/3] w-full" />
       <div className="flex flex-col gap-0.5 px-1 pb-1">
-        <span className="truncate text-[13px] font-semibold text-white">{artifact.title}</span>
-        <span className="truncate text-[11.5px] font-normal text-white/45">{artifact.meta}</span>
+        <span className="text-fg truncate text-[13px] font-semibold">{artifact.title}</span>
+        <span className="text-fg/45 truncate text-[11.5px] font-normal">{artifact.meta}</span>
       </div>
     </button>
   );

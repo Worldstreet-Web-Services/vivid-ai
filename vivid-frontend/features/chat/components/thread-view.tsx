@@ -69,14 +69,14 @@ export function ThreadView({ sessionId, spaces }: ThreadViewProps) {
   return (
     <div className="flex min-h-full flex-col">
       <div className="mx-auto w-full max-w-[760px] flex-1 px-5 pt-8 pb-6">
-        <h1 className="ws-display text-[24px] leading-tight text-white">{heading}</h1>
+        <h1 className="ws-display text-fg text-[24px] leading-tight">{heading}</h1>
 
         <div className="mt-8 flex flex-col gap-8">
           {session.messages.map((message) =>
             message.role === "user" ? (
               <div key={message.id} className="flex items-start gap-3">
                 <Avatar name="Guest" size="sm" className="mt-0.5" />
-                <p className="flex-1 pt-1 text-[15px] leading-relaxed font-medium text-white">
+                <p className="text-fg flex-1 pt-1 text-[15px] leading-relaxed font-medium">
                   {message.content}
                 </p>
               </div>
@@ -84,7 +84,7 @@ export function ThreadView({ sessionId, spaces }: ThreadViewProps) {
               <div key={message.id} className="flex flex-col gap-5">
                 {message.sources?.length ? (
                   <section aria-label="Sources">
-                    <h2 className="mb-2.5 text-[11.5px] font-semibold tracking-wide text-white/40 uppercase">
+                    <h2 className="text-fg/40 mb-2.5 text-[11.5px] font-semibold tracking-wide uppercase">
                       Sources
                     </h2>
                     <div className="grid gap-2.5 sm:grid-cols-3">
@@ -102,7 +102,7 @@ export function ThreadView({ sessionId, spaces }: ThreadViewProps) {
 
                 <div className="flex flex-col gap-4">
                   {message.content.split("\n\n").map((paragraph, i) => (
-                    <p key={i} className="text-[15px] leading-[1.75] font-normal text-white/85">
+                    <p key={i} className="text-fg/85 text-[15px] leading-[1.75] font-normal">
                       {paragraph}
                     </p>
                   ))}

@@ -40,7 +40,7 @@ export function SourceDialog({ source, onClose }: SourceDialogProps) {
       }
     >
       {source ? (
-        <blockquote className="vd-glass-well rounded-[16px] p-4 text-[13px] leading-relaxed font-normal text-white/70">
+        <blockquote className="vd-glass-well text-fg/70 rounded-[16px] p-4 text-[13px] leading-relaxed font-normal">
           {source.snippet}
         </blockquote>
       ) : null}

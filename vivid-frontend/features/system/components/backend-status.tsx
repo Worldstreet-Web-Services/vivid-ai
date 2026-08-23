@@ -11,7 +11,7 @@ export function BackendStatus({ className }: { className?: string }) {
   const state = isPending ? "checking" : isError ? "down" : data?.status === "ok" ? "up" : "down";
 
   const dot = {
-    checking: "bg-white/30",
+    checking: "bg-fg/30",
     up: "bg-up",
     down: "bg-down",
   }[state];
@@ -24,10 +24,7 @@ export function BackendStatus({ className }: { className?: string }) {
 
   return (
     <div
-      className={cn(
-        "inline-flex items-center gap-2 text-[12px] font-normal text-white/45",
-        className
-      )}
+      className={cn("text-fg/45 inline-flex items-center gap-2 text-[12px] font-normal", className)}
     >
       <span className={cn("size-1.5 shrink-0 rounded-full", dot)} aria-hidden="true" />
       <span>{label}</span>

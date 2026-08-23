@@ -31,13 +31,10 @@ export function CardHeader({ className, ...props }: React.ComponentProps<"div">)
 
 export function CardTitle({ className, ...props }: React.ComponentProps<"h3">) {
   return (
-    <h3
-      className={cn("text-[15px] leading-tight font-semibold text-white", className)}
-      {...props}
-    />
+    <h3 className={cn("text-fg text-[15px] leading-tight font-semibold", className)} {...props} />
   );
 }
 
 export function CardDescription({ className, ...props }: React.ComponentProps<"p">) {
-  return <p className={cn("text-[13px] font-normal text-white/50", className)} {...props} />;
+  return <p className={cn("text-fg/50 text-[13px] font-normal", className)} {...props} />;
 }

@@ -36,7 +36,7 @@ export function OnboardingFlow() {
 
   const eyebrow = (
     <div className="flex items-center gap-2">
-      <span className="text-[11.5px] font-semibold tracking-wide text-white/40 uppercase">
+      <span className="text-fg/40 text-[11.5px] font-semibold tracking-wide uppercase">
         Step {index + 1} of {STEPS.length}
       </span>
       <div className="flex flex-1 items-center gap-1">
@@ -45,7 +45,7 @@ export function OnboardingFlow() {
             key={s}
             className={cn(
               "h-[3px] flex-1 rounded-full transition-colors",
-              i <= index ? "bg-white/70" : "bg-white/12"
+              i <= index ? "bg-fg/70" : "bg-fg/12"
             )}
           />
         ))}
@@ -116,8 +116,8 @@ export function OnboardingFlow() {
                     "vd-glass-control vd-sheen flex cursor-pointer items-center gap-1.5 rounded-full px-3.5 py-2",
                     "text-[12.5px] font-medium transition-colors",
                     on
-                      ? "border-white/45 bg-white/18 text-white"
-                      : "text-white/70 hover:border-white/28 hover:text-white"
+                      ? "border-fg/45 bg-fg/18 text-fg"
+                      : "text-fg/70 hover:border-fg/28 hover:text-fg"
                   )}
                 >
                   {on ? <CheckIcon size={13} /> : null}
@@ -128,9 +128,7 @@ export function OnboardingFlow() {
           </div>
 
           <div className="flex items-center justify-between gap-3">
-            <span className="text-[12.5px] font-normal text-white/45">
-              {selected.length} selected
-            </span>
+            <span className="text-fg/45 text-[12.5px] font-normal">{selected.length} selected</span>
             <div className="flex items-center gap-2">
               <Button variant="ghost" size="md" onClick={() => setStep("name")}>
                 Back
@@ -164,30 +162,30 @@ export function OnboardingFlow() {
                 onClick={() => setPlan(option.id)}
                 className={cn(
                   "vd-glass-card vd-sheen vd-glass-hover flex cursor-pointer flex-col gap-3 p-5 text-left",
-                  on && "border-white/45 bg-white/12"
+                  on && "border-fg/45 bg-fg/12"
                 )}
               >
                 <div className="flex items-center justify-between gap-2">
-                  <span className="text-[14px] font-semibold text-white">{option.name}</span>
+                  <span className="text-fg text-[14px] font-semibold">{option.name}</span>
                   {option.featured ? (
-                    <span className="rounded-full bg-white/15 px-2 py-0.5 text-[10.5px] font-semibold text-white/80">
+                    <span className="bg-fg/15 text-fg/80 rounded-full px-2 py-0.5 text-[10.5px] font-semibold">
                       Popular
                     </span>
                   ) : null}
                 </div>
 
                 <div className="flex items-baseline gap-1.5">
-                  <span className="ws-display text-[24px] text-white">{option.price}</span>
-                  <span className="text-[11.5px] font-normal text-white/45">{option.cadence}</span>
+                  <span className="ws-display text-fg text-[24px]">{option.price}</span>
+                  <span className="text-fg/45 text-[11.5px] font-normal">{option.cadence}</span>
                 </div>
 
                 <ul className="flex flex-col gap-1.5">
                   {option.features.map((feature) => (
                     <li
                       key={feature}
-                      className="flex items-start gap-2 text-[12px] font-normal text-white/60"
+                      className="text-fg/60 flex items-start gap-2 text-[12px] font-normal"
                     >
-                      <CheckIcon size={13} className="mt-0.5 shrink-0 text-white/40" />
+                      <CheckIcon size={13} className="text-fg/40 mt-0.5 shrink-0" />
                       {feature}
                     </li>
                   ))}

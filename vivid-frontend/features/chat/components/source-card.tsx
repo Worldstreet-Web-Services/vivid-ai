@@ -7,7 +7,7 @@ function DomainMark({ domain }: { domain: string }) {
   return (
     <span
       aria-hidden="true"
-      className="vd-glass-control grid size-5 shrink-0 place-items-center rounded-md text-[10px] font-semibold text-white/70"
+      className="vd-glass-control text-fg/70 grid size-5 shrink-0 place-items-center rounded-md text-[10px] font-semibold"
     >
       {domain[0]?.toUpperCase()}
     </span>
@@ -34,12 +34,12 @@ export function SourceCard({ source, index, onClick, className }: SourceCardProp
     >
       <div className="flex items-center gap-2">
         <DomainMark domain={source.domain} />
-        <span className="truncate text-[11.5px] font-medium text-white/50">{source.domain}</span>
-        <span className="ml-auto shrink-0 rounded-full bg-white/10 px-1.5 text-[10.5px] font-semibold text-white/60">
+        <span className="text-fg/50 truncate text-[11.5px] font-medium">{source.domain}</span>
+        <span className="bg-fg/10 text-fg/60 ml-auto shrink-0 rounded-full px-1.5 text-[10.5px] font-semibold">
           {index + 1}
         </span>
       </div>
-      <span className="line-clamp-2 text-[12.5px] leading-snug font-medium text-white/85">
+      <span className="text-fg/85 line-clamp-2 text-[12.5px] leading-snug font-medium">
         {source.title}
       </span>
     </button>
@@ -53,7 +53,7 @@ export function CitationPill({ index, onClick }: { index: number; onClick?: () =
       type="button"
       onClick={onClick}
       aria-label={`Source ${index + 1}`}
-      className="vd-glass-control mx-0.5 inline-grid size-[17px] cursor-pointer place-items-center rounded-full align-[1px] text-[10px] font-semibold text-white/70 hover:text-white"
+      className="vd-glass-control text-fg/70 hover:text-fg mx-0.5 inline-grid size-[17px] cursor-pointer place-items-center rounded-full align-[1px] text-[10px] font-semibold"
     >
       {index + 1}
     </button>

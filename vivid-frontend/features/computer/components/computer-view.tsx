@@ -46,12 +46,12 @@ export function ComputerView({ task, composerSlot }: ComputerViewProps) {
 
       <Card className="mt-6 p-5">
         <div className="flex items-start gap-3">
-          <span className="vd-glass-control grid size-10 shrink-0 place-items-center rounded-[13px] text-white/75">
+          <span className="vd-glass-control text-fg/75 grid size-10 shrink-0 place-items-center rounded-[13px]">
             <ComputerIcon size={18} />
           </span>
           <div className="flex min-w-0 flex-1 flex-col gap-1">
-            <span className="text-[14px] font-semibold text-white">{task.goal}</span>
-            <span className="text-[12px] font-normal text-white/45">
+            <span className="text-fg text-[14px] font-semibold">{task.goal}</span>
+            <span className="text-fg/45 text-[12px] font-normal">
               {paused ? "Paused" : "Running"} · {progress}% complete
             </span>
           </div>
@@ -66,7 +66,7 @@ export function ComputerView({ task, composerSlot }: ComputerViewProps) {
           className="vd-glass-well mt-4 h-1.5 overflow-hidden rounded-full"
         >
           <div
-            className="h-full rounded-full bg-white/75 transition-[width] duration-500"
+            className="bg-fg/75 h-full rounded-full transition-[width] duration-500"
             style={{ width: `${progress}%` }}
           />
         </div>
@@ -85,20 +85,20 @@ export function ComputerView({ task, composerSlot }: ComputerViewProps) {
               aria-hidden="true"
               className={cn(
                 "mt-0.5 grid size-6 shrink-0 place-items-center rounded-full text-[11px] font-semibold",
-                step.state === "done" && "bg-white text-black",
-                step.state === "running" && "vd-glass-control text-white",
-                step.state === "pending" && "vd-glass-well text-white/50"
+                step.state === "done" && "bg-fg text-fg-invert",
+                step.state === "running" && "vd-glass-control text-fg",
+                step.state === "pending" && "vd-glass-well text-fg/50"
               )}
             >
               {step.state === "done" ? (
                 <CheckIcon size={13} />
               ) : step.state === "running" ? (
-                <span className="size-2 animate-pulse rounded-full bg-white" />
+                <span className="bg-fg size-2 animate-pulse rounded-full" />
               ) : null}
             </span>
 
             <div className="flex min-w-0 flex-col gap-0.5">
-              <span className="text-[13.5px] font-semibold text-white">
+              <span className="text-fg text-[13.5px] font-semibold">
                 {step.label}
                 <span className="sr-only">
                   {step.state === "done"
@@ -108,7 +108,7 @@ export function ComputerView({ task, composerSlot }: ComputerViewProps) {
                       : " (not started)"}
                 </span>
               </span>
-              <span className="text-[12.5px] leading-relaxed font-normal text-white/50">
+              <span className="text-fg/50 text-[12.5px] leading-relaxed font-normal">
                 {step.detail}
               </span>
             </div>

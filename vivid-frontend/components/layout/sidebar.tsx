@@ -3,17 +3,18 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-import { Avatar } from "@/components/ui/avatar";
 import { SidebarIcon } from "@/components/ui/icons";
+import { AccountMenu } from "@/components/layout/account-menu";
 import { sidebarNav } from "@/components/layout/nav-items";
 import { cn } from "@/lib/utils";
 
 interface SidebarProps {
   collapsed: boolean;
   onToggle: () => void;
+  onShowShortcuts: () => void;
 }
 
-export function Sidebar({ collapsed, onToggle }: SidebarProps) {
+export function Sidebar({ collapsed, onToggle, onShowShortcuts }: SidebarProps) {
   const pathname = usePathname();
 
   return (
@@ -26,7 +27,7 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
     >
       <div className="flex h-14 items-center justify-between px-3">
         {!collapsed ? (
-          <Link href="/" className="ws-display px-1 text-[17px] text-white">
+          <Link href="/" className="ws-display text-fg px-1 text-[17px]">
             Vivid
           </Link>
         ) : null}
@@ -35,7 +36,7 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
           onClick={onToggle}
           aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
           aria-expanded={!collapsed}
-          className="hover:vd-glass-control grid size-9 cursor-pointer place-items-center rounded-lg text-white/55 transition-colors hover:text-white"
+          className="hover:vd-glass-control text-fg/55 hover:text-fg grid size-9 cursor-pointer place-items-center rounded-lg transition-colors"
         >
           <SidebarIcon size={18} />
         </button>
@@ -52,9 +53,7 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
               title={collapsed ? label : undefined}
               className={cn(
                 "flex h-9 items-center gap-3 rounded-lg px-2.5 text-[13.5px] font-medium transition-colors",
-                active
-                  ? "bg-white/10 text-white"
-                  : "text-white/60 hover:bg-white/6 hover:text-white"
+                active ? "bg-fg/10 text-fg" : "text-fg/60 hover:bg-fg/6 hover:text-fg"
               )}
             >
               <Icon size={18} className="shrink-0" />
@@ -64,13 +63,13 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
         })}
       </nav>
 
-      <div className="border-t border-white/8 p-2">
-        <div className="flex items-center gap-2.5 rounded-lg px-1.5 py-1.5">
-          <Avatar name="Guest" size="sm" />
-          {!collapsed ? (
-            <span className="truncate text-[13px] font-medium text-white/70">Guest</span>
-          ) : null}
-        </div>
+      <div className="border-fg/8 border-t p-2">
+        <AccountMenu
+          name="Guest"
+          plan="Free plan"
+          collapsed={collapsed}
+          onShowShortcuts={onShowShortcuts}
+        />
       </div>
     </aside>
   );

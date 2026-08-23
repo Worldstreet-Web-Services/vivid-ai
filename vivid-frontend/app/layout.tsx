@@ -3,6 +3,7 @@ import { Geist } from "next/font/google";
 import localFont from "next/font/local";
 
 import { siteConfig } from "@/config/site";
+import { THEME_INIT_SCRIPT } from "@/lib/theme";
 import Providers from "./providers";
 import "./globals.css";
 
@@ -31,7 +32,16 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="en" className={`${geist.variable} ${monaSans.variable} h-full antialiased`}>
+    <html
+      lang="en"
+      className={`${geist.variable} ${monaSans.variable} h-full antialiased`}
+      suppressHydrationWarning
+    >
+      <head>
+        {/* Applies the saved theme before the first paint. An effect would
+            paint dark first and then correct it. */}
+        <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
+      </head>
       <body className="min-h-full">
         <Providers>{children}</Providers>
       </body>

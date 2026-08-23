@@ -37,8 +37,8 @@ export function SignInForm() {
       footer={
         <>
           By continuing you agree to the{" "}
-          <span className="text-white/70 underline underline-offset-2">Terms</span> and{" "}
-          <span className="text-white/70 underline underline-offset-2">Privacy Policy</span>.
+          <span className="text-fg/70 underline underline-offset-2">Terms</span> and{" "}
+          <span className="text-fg/70 underline underline-offset-2">Privacy Policy</span>.
         </>
       }
     >
@@ -48,9 +48,9 @@ export function SignInForm() {
       </div>
 
       <div className="my-5 flex items-center gap-3">
-        <span className="h-px flex-1 bg-white/10" />
-        <span className="text-[11.5px] font-medium tracking-wide text-white/35 uppercase">or</span>
-        <span className="h-px flex-1 bg-white/10" />
+        <span className="bg-fg/10 h-px flex-1" />
+        <span className="text-fg/35 text-[11.5px] font-medium tracking-wide uppercase">or</span>
+        <span className="bg-fg/10 h-px flex-1" />
       </div>
 
       <form onSubmit={onSubmit} noValidate className="flex flex-col gap-4">
@@ -58,7 +58,7 @@ export function SignInForm() {
           <div className="relative">
             <MailIcon
               size={16}
-              className="pointer-events-none absolute top-1/2 left-3.5 -translate-y-1/2 text-white/35"
+              className="text-fg/35 pointer-events-none absolute top-1/2 left-3.5 -translate-y-1/2"
             />
             <Input
               id="email"

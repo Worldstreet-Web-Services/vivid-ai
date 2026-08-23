@@ -11,7 +11,7 @@ export function AsyncLoading({ label = "Loading…", rows = 3 }: { label?: strin
     <div role="status" aria-live="polite" className="flex flex-col gap-2">
       <span className="sr-only">{label}</span>
       {Array.from({ length: rows }, (_, i) => (
-        <div key={i} className="h-[52px] animate-pulse rounded-[14px] bg-white/6" />
+        <div key={i} className="bg-fg/6 h-[52px] animate-pulse rounded-[14px]" />
       ))}
     </div>
   );
@@ -19,7 +19,7 @@ export function AsyncLoading({ label = "Loading…", rows = 3 }: { label?: strin
 
 export function AsyncEmpty({ children }: { children: React.ReactNode }) {
   return (
-    <div className="grid place-items-center px-4 py-14 text-center text-[13px] font-normal text-white/45">
+    <div className="text-fg/45 grid place-items-center px-4 py-14 text-center text-[13px] font-normal">
       {children}
     </div>
   );
@@ -52,12 +52,12 @@ export function AsyncError({
   return (
     <div className="vd-glass-card vd-sheen grid place-items-center px-5 py-12 text-center">
       <div className="max-w-[42ch]">
-        <div className="text-[14px] font-semibold text-white/85">{message}</div>
-        <div className="mt-1.5 text-[12.5px] font-normal text-white/50">{detail}</div>
+        <div className="text-fg/85 text-[14px] font-semibold">{message}</div>
+        <div className="text-fg/50 mt-1.5 text-[12.5px] font-normal">{detail}</div>
         {onRetry && !unconfigured ? (
           <button
             onClick={onRetry}
-            className="vd-glass-control vd-sheen mt-4 cursor-pointer rounded-full px-4 py-2 font-sans text-[12.5px] font-semibold text-white hover:border-white/28"
+            className="vd-glass-control vd-sheen text-fg hover:border-fg/28 mt-4 cursor-pointer rounded-full px-4 py-2 font-sans text-[12.5px] font-semibold"
           >
             Try again
           </button>

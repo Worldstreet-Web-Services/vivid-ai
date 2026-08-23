@@ -79,7 +79,7 @@ export function FeedbackDialog({ open, onOpenChange, rating }: FeedbackDialogPro
                   className={cn(
                     "vd-glass-control vd-sheen cursor-pointer rounded-full px-3 py-1.5 text-[12px] font-medium",
                     "transition-colors",
-                    on ? "border-white/45 bg-white/18 text-white" : "text-white/65 hover:text-white"
+                    on ? "border-fg/45 bg-fg/18 text-fg" : "text-fg/65 hover:text-fg"
                   )}
                 >
                   {tag}

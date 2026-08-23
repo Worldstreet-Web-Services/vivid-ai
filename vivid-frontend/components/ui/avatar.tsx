@@ -23,7 +23,7 @@ export function Avatar({ name, size = "md", className }: AvatarProps) {
       data-slot="avatar"
       data-size={size}
       className={cn(
-        "inline-grid shrink-0 place-items-center rounded-full bg-white/10 font-semibold text-white/80 select-none",
+        "bg-fg/10 text-fg/80 inline-grid shrink-0 place-items-center rounded-full font-semibold select-none",
         SIZE[size],
         className
       )}

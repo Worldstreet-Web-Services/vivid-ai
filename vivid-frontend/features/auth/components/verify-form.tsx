@@ -47,7 +47,7 @@ export function VerifyForm() {
         <button
           type="button"
           onClick={() => router.push("/sign-in")}
-          className="cursor-pointer text-white/60 underline underline-offset-2 hover:text-white"
+          className="text-fg/60 hover:text-fg cursor-pointer underline underline-offset-2"
         >
           Use a different email
         </button>
@@ -89,8 +89,8 @@ export function VerifyForm() {
                     aria-hidden="true"
                     className={cn(
                       "vd-glass-well grid h-14 flex-1 place-items-center rounded-[14px]",
-                      "font-mono text-[20px] font-semibold text-white transition-colors",
-                      active && "border-white/35",
+                      "text-fg font-mono text-[20px] font-semibold transition-colors",
+                      active && "border-fg/35",
                       error && "border-[rgba(246,165,165,0.55)]"
                     )}
                   >
@@ -112,14 +112,14 @@ export function VerifyForm() {
           Verify and continue
         </Button>
 
-        <p className="text-center text-[12.5px] font-normal text-white/45">
+        <p className="text-fg/45 text-center text-[12.5px] font-normal">
           {secondsLeft > 0 ? (
             <>Resend the code in {secondsLeft}s</>
           ) : (
             <button
               type="button"
               onClick={() => setSecondsLeft(RESEND_SECONDS)}
-              className="cursor-pointer text-white/70 underline underline-offset-2 hover:text-white"
+              className="text-fg/70 hover:text-fg cursor-pointer underline underline-offset-2"
             >
               Send a new code
             </button>

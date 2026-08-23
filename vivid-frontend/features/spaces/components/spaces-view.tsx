@@ -37,17 +37,17 @@ export function SpacesView({ spaces }: { spaces: Space[] }) {
         {spaces.map((space) => (
           <Card key={space.id} interactive className="flex flex-col gap-3 p-5">
             <div className="flex items-start gap-3">
-              <span className="vd-glass-control grid size-9 shrink-0 place-items-center rounded-[12px] text-white/70">
+              <span className="vd-glass-control text-fg/70 grid size-9 shrink-0 place-items-center rounded-[12px]">
                 <SpacesIcon size={17} />
               </span>
               <div className="flex min-w-0 flex-col gap-0.5">
-                <span className="truncate text-[14px] font-semibold text-white">{space.name}</span>
-                <span className="text-[12px] font-normal text-white/45">
+                <span className="text-fg truncate text-[14px] font-semibold">{space.name}</span>
+                <span className="text-fg/45 text-[12px] font-normal">
                   {space.threadCount} threads · {relativeTime(new Date(space.updatedAt))}
                 </span>
               </div>
             </div>
-            <p className="line-clamp-2 text-[12.5px] leading-relaxed font-normal text-white/55">
+            <p className="text-fg/55 line-clamp-2 text-[12.5px] leading-relaxed font-normal">
               {space.description}
             </p>
           </Card>

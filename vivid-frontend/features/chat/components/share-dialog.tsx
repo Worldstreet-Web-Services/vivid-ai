@@ -31,8 +31,8 @@ export function ShareDialog({ open, onOpenChange, sessionId }: ShareDialogProps)
     >
       <div className="flex flex-col gap-4">
         <div className="vd-glass-well flex items-center gap-2.5 rounded-[14px] p-3">
-          <LinkIcon size={16} className="shrink-0 text-white/40" />
-          <span className="truncate font-mono text-[12.5px] text-white/70">{url}</span>
+          <LinkIcon size={16} className="text-fg/40 shrink-0" />
+          <span className="text-fg/70 truncate font-mono text-[12.5px]">{url}</span>
           <Button
             size="sm"
             variant="secondary"
@@ -51,8 +51,8 @@ export function ShareDialog({ open, onOpenChange, sessionId }: ShareDialogProps)
 
         <label className="vd-glass-control vd-sheen flex cursor-pointer items-center gap-3 rounded-[14px] p-3.5">
           <span className="flex flex-1 flex-col gap-0.5">
-            <span className="text-[13px] font-semibold text-white">Make it public</span>
-            <span className="text-[12px] font-normal text-white/50">
+            <span className="text-fg text-[13px] font-semibold">Make it public</span>
+            <span className="text-fg/50 text-[12px] font-normal">
               Listed on your profile and discoverable.
             </span>
           </span>

@@ -31,24 +31,24 @@ export function AuthCard({
   return (
     <div className={cn("w-full", WIDTH[width], className)}>
       <div className="mb-7 text-center">
-        <p className="ws-display text-[26px] leading-none text-white">
-          Vivid <span className="font-medium text-white/45">AI</span>
+        <p className="ws-display text-fg text-[26px] leading-none">
+          Vivid <span className="text-fg/45 font-medium">AI</span>
         </p>
       </div>
 
       <div className="vd-glass-card vd-sheen p-7">
         {eyebrow ? <div className="mb-3">{eyebrow}</div> : null}
 
-        <h1 className="ws-display text-[21px] leading-tight text-white">{title}</h1>
+        <h1 className="ws-display text-fg text-[21px] leading-tight">{title}</h1>
         {subtitle ? (
-          <p className="mt-2 text-[13.5px] leading-relaxed font-normal text-white/55">{subtitle}</p>
+          <p className="text-fg/55 mt-2 text-[13.5px] leading-relaxed font-normal">{subtitle}</p>
         ) : null}
 
         <div className="mt-6">{children}</div>
       </div>
 
       {footer ? (
-        <div className="mt-5 text-center text-[12.5px] font-normal text-white/45">{footer}</div>
+        <div className="text-fg/45 mt-5 text-center text-[12.5px] font-normal">{footer}</div>
       ) : null}
     </div>
   );

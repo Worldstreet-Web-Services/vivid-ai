@@ -4,7 +4,7 @@ export default function Loading() {
       <span className="sr-only">Loading</span>
       <span
         aria-hidden="true"
-        className="size-5 animate-spin rounded-full border-2 border-white/25 border-t-white"
+        className="border-fg/25 size-5 animate-spin rounded-full border-2 border-t-white"
       />
     </div>
   );

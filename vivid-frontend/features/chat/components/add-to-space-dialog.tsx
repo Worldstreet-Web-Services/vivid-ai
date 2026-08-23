@@ -62,7 +62,7 @@ export function AddToSpaceDialog({ open, onOpenChange, spaces }: AddToSpaceDialo
         <div className="relative">
           <SearchIcon
             size={16}
-            className="pointer-events-none absolute top-1/2 left-3.5 -translate-y-1/2 text-white/35"
+            className="text-fg/35 pointer-events-none absolute top-1/2 left-3.5 -translate-y-1/2"
           />
           <Input
             placeholder="Find a space"
@@ -75,7 +75,7 @@ export function AddToSpaceDialog({ open, onOpenChange, spaces }: AddToSpaceDialo
 
         <div className="flex max-h-[260px] flex-col gap-1.5 overflow-y-auto">
           {filtered.length === 0 ? (
-            <p className="px-1 py-6 text-center text-[12.5px] font-normal text-white/45">
+            <p className="text-fg/45 px-1 py-6 text-center text-[12.5px] font-normal">
               No space matches &ldquo;{query.trim()}&rdquo;.
             </p>
           ) : (
@@ -89,18 +89,18 @@ export function AddToSpaceDialog({ open, onOpenChange, spaces }: AddToSpaceDialo
                   onClick={() => setSelected(space.id)}
                   className={cn(
                     "vd-glass-control vd-sheen flex cursor-pointer items-center gap-3 rounded-[14px] px-3.5 py-3",
-                    "text-left transition-colors hover:border-white/28",
-                    on && "border-white/45 bg-white/14"
+                    "hover:border-fg/28 text-left transition-colors",
+                    on && "border-fg/45 bg-fg/14"
                   )}
                 >
-                  <FolderPlusIcon size={16} className="shrink-0 text-white/45" />
-                  <span className="flex-1 truncate text-[13px] font-medium text-white/85">
+                  <FolderPlusIcon size={16} className="text-fg/45 shrink-0" />
+                  <span className="text-fg/85 flex-1 truncate text-[13px] font-medium">
                     {space.name}
                   </span>
-                  <span className="shrink-0 text-[11.5px] font-normal text-white/40">
+                  <span className="text-fg/40 shrink-0 text-[11.5px] font-normal">
                     {space.count}
                   </span>
-                  {on ? <CheckIcon size={15} className="shrink-0 text-white" /> : null}
+                  {on ? <CheckIcon size={15} className="text-fg shrink-0" /> : null}
                 </button>
               );
             })
