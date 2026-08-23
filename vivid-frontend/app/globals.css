@@ -1,0 +1,129 @@
+/* source(none) disables Tailwind's automatic content detection, which otherwise
+   walks up to a mis-inferred workspace root and scans foreign trees. Scan only
+   this app's own source instead.
+
+   Every directory holding markup must be listed below. A class used only in an
+   unlisted directory is silently dropped from the stylesheet: no error, no
+   warning, just an unstyled component. */
+@import "tailwindcss" source(none);
+@source "../app";
+@source "../components";
+@source "../features";
+@source "../lib";
+@source "../hooks";
+
+/* Design tokens are shared with the Worldstreet frontend so the two apps read
+   the same way. Keep the token names identical: a component moved between the
+   repos should not need its classes rewritten. */
+@theme inline {
+  --font-sans: var(--font-body);
+  /* Header font. Kept under the --font-serif token (and the ws-display utility)
+     to match the sibling repo, but it is Mona Sans, a sans display face. */
+  --font-serif: var(--font-display);
+
+  /* The brand is monochrome: no purple, no gold. The accent is silver, so
+     text-accent and the accent tints read as light neutral washes on black. */
+  --color-accent: #d4d4d8;
+  /* Positive and negative stay semantic (functional, not brand color). */
+  --color-up: #7ce7b0;
+  --color-up-ink: #04241a;
+  --color-down: #f6a5a5;
+  --color-down-ink: #2a0e0e;
+  /* Dark text on light (silver/white) buttons. */
+  --color-ink: #0a0a0a;
+  /* Small directional glyphs. */
+  --color-arrow: #8a8a8f;
+  --color-panel: #0a0a0a;
+  --color-sheet: #0c0c0e;
+
+  /* Designer greyscale scale. Neutral steps for text, borders, and surfaces.
+     Token names mirror the design file's grey/20..100. */
+  --color-grey-100: #f4f4f4;
+  --color-grey-200: #dcdcdc;
+  --color-grey-300: #bfbfbf;
+  --color-grey-400: #9b9b9b;
+  --color-grey-500: #7a7a7a;
+  --color-grey-600: #5a5a5a;
+  --color-grey-700: #3c3c3c;
+  --color-grey-800: #1c1c1c;
+  --color-grey-900: #0f0f0f;
+
+  /* Semantic tokens used by the shadcn-style primitives, mapped to this app's
+     dark palette so those components render without a separate token layer. */
+  --color-primary: #e8e8ea;
+  --color-primary-foreground: #0a0a0a;
+  --color-foreground: #ededed;
+  --color-background: #fafafa;
+  --color-input: #33333a;
+  --color-ring: #d4d4d8;
+  --color-destructive: #ef4444;
+}
+
+body {
+  background: #000;
+  color: #fff;
+  font-family: var(--font-sans), sans-serif;
+  /* Normal text runs in Geist medium, not the lighter default weight.
+     Component classes still override where a different weight is wanted. */
+  font-weight: 500;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+
+::selection {
+  background: rgba(255, 255, 255, 0.35);
+  color: #fff;
+}
+
+::placeholder {
+  color: rgba(255, 255, 255, 0.4);
+}
+
+@utility ws-display {
+  font-family: var(--font-serif), sans-serif;
+  /* Mona Sans at bold. Component tracking utilities still override the
+     letter-spacing where a title needs it tighter. */
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+@utility ws-card {
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.15);
+}
+
+@utility ws-inset {
+  border-radius: 16px;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+/* Invalid-input state for ws-inset field containers. !important because
+   ws-inset sets border-color through its border shorthand and utility order
+   is not guaranteed to favour this one. */
+@utility ws-invalid {
+  border-color: rgba(246, 165, 165, 0.55) !important;
+}
+
+@utility ws-glass {
+  background: rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(18px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22);
+}
+
+@utility tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

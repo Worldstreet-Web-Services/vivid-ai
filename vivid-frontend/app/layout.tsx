@@ -1,0 +1,43 @@
+import type { Metadata } from "next";
+import { Geist } from "next/font/google";
+import localFont from "next/font/local";
+
+import { AppShell } from "@/components/layout/app-shell";
+import { siteConfig } from "@/config/site";
+import Providers from "./providers";
+import "./globals.css";
+
+// Body and normal text. Geist is a variable font, so every weight ships in one
+// file and there is no per-weight request.
+const geist = Geist({
+  variable: "--font-body",
+  subsets: ["latin"],
+});
+
+// Headers. Mona Sans, used at bold by the ws-display utility. Shared with the
+// Worldstreet frontend so headings match across the two apps.
+const monaSans = localFont({
+  src: "./fonts/mona-sans-latin.woff2",
+  weight: "500 700",
+  variable: "--font-display",
+});
+
+export const metadata: Metadata = {
+  title: {
+    default: siteConfig.name,
+    template: `%s · ${siteConfig.name}`,
+  },
+  description: siteConfig.description,
+};
+
+export default function RootLayout({ children }: LayoutProps<"/">) {
+  return (
+    <html lang="en" className={`${geist.variable} ${monaSans.variable} h-full antialiased`}>
+      <body className="min-h-full">
+        <Providers>
+          <AppShell>{children}</AppShell>
+        </Providers>
+      </body>
+    </html>
+  );
+}
