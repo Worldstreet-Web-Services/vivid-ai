@@ -25,11 +25,13 @@ export const sidebarNav: NavItem[] = [
   { label: "History", href: "/history", icon: HistoryIcon },
 ];
 
-// The discovery categories across the top of the workspace.
+// The discovery categories across the top of the workspace. All five point at
+// the one discover route with the topic in the query, rather than five routes
+// rendering the same shell.
 export const topicNav: { label: string; href: string }[] = [
-  { label: "Discover", href: "/discover" },
-  { label: "Finance", href: "/finance" },
-  { label: "Health", href: "/health" },
-  { label: "Academic", href: "/academic" },
-  { label: "Patents", href: "/patents" },
+  { label: "Discover", href: "/discover?topic=discover" },
+  { label: "Finance", href: "/discover?topic=finance" },
+  { label: "Health", href: "/discover?topic=health" },
+  { label: "Academic", href: "/discover?topic=academic" },
+  { label: "Patents", href: "/discover?topic=patents" },
 ];

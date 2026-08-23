@@ -67,12 +67,31 @@ Imports point downward and `pnpm lint` enforces it. Read
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) before adding a directory, a
 transport, or a shared component.
 
-## Design tokens
+## Design system
 
-Colours, fonts and the `ws-*` surface utilities are defined once in
-`app/globals.css` and shared with the Worldstreet frontend. Use the tokens
-(`text-accent`, `bg-panel`, `ws-card`, `ws-inset`, `ws-glass`, `ws-display`)
-rather than raw hex, so the two apps stay in step.
+The palette, the fonts and the `ws-*` utilities come from the Worldstreet
+frontend unchanged, so a component moved between the repos does not need its
+classes rewritten. The material is this app's own: one water glass at five
+weights.
+
+```
+vd-glass-control   buttons, chips, toolbar items
+vd-glass-card      panels, tiles, list rows, the composer
+vd-glass-sheet     modals, menus, popovers
+vd-glass-well      inputs and quotes
+vd-glass-bright    the primary action
+vd-sheen           the specular streak, pair with any tier
+```
+
+Two rules keep it coherent:
+
+**Never name a colour.** Use `text-fg`, `bg-fg/10`, `border-fg/12`, `ring-page`
+and the intent tokens. A literal `text-white` cannot be themed.
+
+**Glass needs light behind it.** `AmbientBackdrop` provides it. Without it every
+surface renders as a flat grey rectangle.
+
+`docs/ARCHITECTURE.md` has the full table and the two traps in `globals.css`.
 
 Adding a top-level directory means adding an `@source` line to
 `app/globals.css`. Tailwind scans only the listed directories, and a class used

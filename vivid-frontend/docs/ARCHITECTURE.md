@@ -61,6 +61,8 @@ component.
 ```
 app/                    routes and BFF only
   api/                  one folder per upstream path
+  (app)/                everything behind the shell
+  (auth)/               sign-in, verify, onboarding. No shell.
   layout.tsx  providers.tsx  globals.css
 
 features/               vertical slices. Each owns its whole vertical.
@@ -72,18 +74,21 @@ features/               vertical slices. Each owns its whole vertical.
 
 components/
   ui/                   design system
-  layout/               app-shell, sidebar, topbar, nav-items
+  layout/               app-shell, sidebar, topbar, menus, nav-items
 
 hooks/                  generic cross-cutting hooks
 lib/                    cross-cutting only
   api.ts                apiFetch
   api/                  envelope.ts, service.ts, schemas/
   server/               server only. A client import must fail.
-  format.ts  utils.ts
+  format.ts  theme.ts  clipboard.ts  utils.ts
 
 config/                 app metadata
 docs/                   this file
 ```
+
+The ten slices: `artifacts`, `auth`, `billing`, `chat`, `computer`, `customize`,
+`discover`, `history`, `settings`, `spaces`, plus `system` for the health check.
 
 Tests sit beside the code they cover and take its name, so `suggestions.ts` is
 covered by `suggestions.test.ts` in the same folder and a slice can be read,
@@ -169,6 +174,44 @@ possible.
 
 ---
 
+## 5a. The design system
+
+One material, five weights. Every button, card, menu and sheet is the same
+glass; what changes is blur depth, radius and how far the surface floats.
+
+| Utility            | Use                                              |
+| ------------------ | ------------------------------------------------ |
+| `vd-glass`         | Base material. The shell chrome.                 |
+| `vd-glass-control` | Buttons, chips, pills, toolbar items.            |
+| `vd-glass-card`    | Panels, tiles, list rows, the composer.          |
+| `vd-glass-sheet`   | Modals, menus, popovers. The heaviest blur.      |
+| `vd-glass-well`    | Inputs and quotes. Reads as cut in, not floating.|
+| `vd-glass-bright`  | The primary action. Bright, still refracting.    |
+| `vd-sheen`         | The specular streak. Pair with any tier.         |
+| `vd-glass-hover`   | Hover lift, so a card and a button match.        |
+
+Three things make a surface read as glass rather than a grey box: `saturate()`
+in the backdrop filter, a bright inset line along the top edge, and a soft
+ambient shadow underneath. All three are in the tiers; do not rebuild them by
+hand.
+
+**Glass needs light behind it.** `AmbientBackdrop` paints the pools the glass
+refracts. Without it every surface is a grey rectangle, which is what the first
+build looked like. It is painted as stacked radial gradients, not blurred divs:
+a CSS blur spreads a soft gradient's peak and dilutes it.
+
+**Never name a colour.** Use `text-fg`, `bg-fg/10`, `border-fg/12`, `ring-page`,
+and the intent tokens (`text-up`, `text-down`, `text-accent`). A literal
+`text-white` compiles to a fixed value and cannot be themed.
+
+**Two `@theme` blocks, and the difference matters.** `@theme inline` substitutes
+the literal value into every utility, so a token declared there can never be
+overridden at runtime. Tokens that change with the theme belong in the plain
+`@theme` block, which emits `var(--token)` instead. Getting this wrong produces
+a light theme where the surfaces invert and the text does not.
+
+---
+
 ## 6. Enforcement
 
 Structure that is not enforced decays. These are the mechanisms.
@@ -198,10 +241,11 @@ lint, tests and the build all stay green.
 
 The scaffold is in place. None of the following blocks work.
 
-- [ ] **Screens beyond the launcher.** The Figma reference covers threads,
-      sources, Spaces, Computer, artifacts, history, generation, sharing and
-      settings. Each becomes a slice as its backend endpoint lands.
-- [ ] **Auth.** `apiFetch` has the seam for it and takes no tokens today.
+- [ ] **Endpoints.** Every screen is built; only `GET /api/health` is real.
+      Each slice reads its list through a hook backed by one fixture file, so
+      going live is a change to the `queryFn`, not to the view.
+- [ ] **Auth.** `apiFetch` has the seam for it and takes no tokens today. The
+      sign-in and onboarding submit handlers are where the real calls go.
 - [ ] **Playwright specs** against a preview deployment, once there are flows
       worth driving end to end.
 
@@ -219,6 +263,17 @@ Recorded so they are chosen rather than defaulted into.
    does not, because nothing has asked for a second locale yet. Adding it later
    is a wrapper in `next.config.ts` and a `messages/` directory, not a rewrite,
    so it is deliberately deferred.
-3. **Route groups.** Not used. Every page inherits `AppShell` from the root
-   layout. If a marketing surface arrives that must not carry the shell, that is
-   the point to introduce `(app)` and `(marketing)`.
+3. **Route groups.** In use. `(app)` carries the shell, `(auth)` renders full
+   bleed. They were introduced when auth arrived, which was the first surface
+   that must not carry the sidebar. Both keep the same ambient light, so the
+   glass reads identically on either side of signing in.
+
+4. **A light theme, from a dark-only palette.** The sibling repo is monochrome
+   and dark only. Rather than invent a second palette, light is the same
+   greyscale run the other way: the glass tiers invert from white-on-dark to
+   dark-on-light and the blur and saturation are untouched, since those are what
+   make the material glass rather than a tinted box.
+
+   The cost is that every colour has to be a token. Naming a literal (`text-white`)
+   compiles to a fixed value that no theme can move, which is exactly the bug
+   the first light render surfaced.
