@@ -50,14 +50,14 @@ export function AsyncError({
     : ((error as Error | null)?.message ?? "Something went wrong on our side.");
 
   return (
-    <div className="ws-inset grid place-items-center px-5 py-12 text-center">
+    <div className="vd-glass-card vd-sheen grid place-items-center px-5 py-12 text-center">
       <div className="max-w-[42ch]">
         <div className="text-[14px] font-semibold text-white/85">{message}</div>
         <div className="mt-1.5 text-[12.5px] font-normal text-white/50">{detail}</div>
         {onRetry && !unconfigured ? (
           <button
             onClick={onRetry}
-            className="mt-4 cursor-pointer rounded-full border border-white/15 px-4 py-2 font-sans text-[12.5px] font-semibold text-white transition-colors hover:border-white/35"
+            className="vd-glass-control vd-sheen mt-4 cursor-pointer rounded-full px-4 py-2 font-sans text-[12.5px] font-semibold text-white hover:border-white/28"
           >
             Try again
           </button>

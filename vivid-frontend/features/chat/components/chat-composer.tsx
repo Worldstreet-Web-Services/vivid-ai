@@ -50,7 +50,7 @@ export function ChatComposer({
         submit();
       }}
       className={cn(
-        "ws-card w-full px-3.5 pt-3 pb-2.5 transition-colors",
+        "vd-glass-card vd-sheen w-full px-3.5 pt-3 pb-2.5 transition-colors",
         focused && "border-white/25",
         className
       )}
@@ -94,7 +94,7 @@ export function ChatComposer({
         <div className="ml-auto flex items-center gap-1.5">
           <button
             type="button"
-            className="flex h-8 cursor-pointer items-center gap-1 rounded-full px-2.5 text-[12.5px] font-medium text-white/55 transition-colors hover:bg-white/8 hover:text-white"
+            className="hover:vd-glass-control flex h-8 cursor-pointer items-center gap-1 rounded-full px-2.5 text-[12.5px] font-medium text-white/55 transition-colors hover:text-white"
           >
             {model}
             <ChevronDownIcon size={14} className="text-white/40" />
@@ -108,7 +108,7 @@ export function ChatComposer({
             type="submit"
             aria-label="Send"
             disabled={!value.trim()}
-            className="grid size-8 cursor-pointer place-items-center rounded-full bg-white text-black transition-opacity disabled:pointer-events-none disabled:opacity-35"
+            className="vd-glass-bright vd-sheen grid size-8 cursor-pointer place-items-center rounded-full disabled:pointer-events-none disabled:opacity-35"
           >
             <WaveformIcon size={16} />
           </button>
@@ -132,7 +132,7 @@ function ComposerButton({
       type="button"
       aria-label={label}
       className={cn(
-        "flex h-8 cursor-pointer items-center justify-center rounded-full px-2 text-white/55 transition-colors hover:bg-white/8 hover:text-white",
+        "hover:vd-glass-control flex h-8 cursor-pointer items-center justify-center rounded-full px-2 text-white/55 transition-colors hover:text-white",
         className
       )}
     >

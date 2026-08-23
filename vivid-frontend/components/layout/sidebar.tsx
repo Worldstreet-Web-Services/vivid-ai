@@ -20,7 +20,7 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
     <aside
       data-collapsed={collapsed}
       className={cn(
-        "flex shrink-0 flex-col border-r border-white/8 bg-[var(--color-panel)] transition-[width] duration-200",
+        "vd-glass relative z-10 flex shrink-0 flex-col border-y-0 border-l-0 border-r-white/10 transition-[width] duration-200",
         collapsed ? "w-[64px]" : "w-[232px]"
       )}
     >
@@ -35,7 +35,7 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
           onClick={onToggle}
           aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
           aria-expanded={!collapsed}
-          className="grid size-9 cursor-pointer place-items-center rounded-lg text-white/55 transition-colors hover:bg-white/8 hover:text-white"
+          className="hover:vd-glass-control grid size-9 cursor-pointer place-items-center rounded-lg text-white/55 transition-colors hover:text-white"
         >
           <SidebarIcon size={18} />
         </button>

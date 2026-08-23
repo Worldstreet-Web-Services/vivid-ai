@@ -118,6 +118,235 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* ---------------------------------------------------------------------------
+   WATER GLASS
+   ---------------------------------------------------------------------------
+   Every button, card, menu and sheet in this app is the same material at a
+   different weight. What changes between tiers is blur depth, corner radius,
+   and how far the surface floats off the background.
+
+   Three things make a surface read as wet glass rather than as a grey box:
+
+   1. saturate() in the backdrop filter. Colour behind the surface bleeds
+      through and intensifies instead of going flat grey. This is the single
+      biggest contributor, and it is what most glassmorphism misses.
+   2. A bright inset line along the top edge, with a fainter one along the
+      bottom. That pair is the specular hit that reads as a lit rim.
+   3. A soft ambient shadow underneath, so the surface floats rather than sits.
+
+   The palette these are built from is shared with the Worldstreet frontend.
+   The material is not: `ws-glass` above is that repo's flatter treatment, kept
+   unchanged so a component copied from it still renders correctly. The
+   `vd-glass-*` family below is Vivid's own, and is what this app builds with.
+   ------------------------------------------------------------------------ */
+
+/* Base material. Use a tier below unless you are building a new kind of
+   surface, so blur depth stays consistent per weight. */
+@utility vd-glass {
+  position: relative;
+  background-color: rgba(255, 255, 255, 0.065);
+  background-image: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.085) 0%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  backdrop-filter: blur(18px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.2),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.03),
+    0 8px 28px rgba(0, 0, 0, 0.42);
+
+  /* Where the backdrop filter is unavailable the surface would otherwise be a
+     nearly transparent wash over whatever sits behind it, which is unreadable.
+     Fall back to a near-solid panel. */
+  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    background-color: rgba(23, 23, 26, 0.94);
+  }
+
+  /* Some people turn transparency off at the OS level, usually because moving
+     blur behind text is hard to read. Honour it. */
+  @media (prefers-reduced-transparency: reduce) {
+    background-color: rgba(23, 23, 26, 0.96);
+    backdrop-filter: none;
+  }
+}
+
+/* Control weight: buttons, chips, pills, inputs. Shallower blur, because a
+   control is small and a deep blur on a small surface just looks muddy. */
+@utility vd-glass-control {
+  position: relative;
+  background-color: rgba(255, 255, 255, 0.08);
+  background-image: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.1) 0%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  backdrop-filter: blur(12px) saturate(170%);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.24),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.04),
+    0 2px 10px rgba(0, 0, 0, 0.3);
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease,
+    box-shadow 150ms ease;
+
+  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    background-color: rgba(30, 30, 34, 0.94);
+  }
+
+  @media (prefers-reduced-transparency: reduce) {
+    background-color: rgba(30, 30, 34, 0.96);
+    backdrop-filter: none;
+  }
+}
+
+/* Card weight: panels, tiles, list rows, the composer. */
+@utility vd-glass-card {
+  position: relative;
+  border-radius: 22px;
+  background-color: rgba(255, 255, 255, 0.055);
+  background-image: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.075) 0%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  backdrop-filter: blur(22px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.2),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.03),
+    0 10px 34px rgba(0, 0, 0, 0.45);
+
+  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    background-color: rgba(23, 23, 26, 0.94);
+  }
+
+  @media (prefers-reduced-transparency: reduce) {
+    background-color: rgba(23, 23, 26, 0.96);
+    backdrop-filter: none;
+  }
+}
+
+/* Sheet weight: modals, menus, popovers, drawers. The heaviest blur, because
+   these sit over arbitrary content and have to stay readable regardless of it. */
+@utility vd-glass-sheet {
+  position: relative;
+  background-color: rgba(255, 255, 255, 0.075);
+  background-image: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.1) 0%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  backdrop-filter: blur(40px) saturate(200%);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.26),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.04),
+    0 24px 70px rgba(0, 0, 0, 0.66);
+
+  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    background-color: rgba(18, 18, 21, 0.97);
+  }
+
+  @media (prefers-reduced-transparency: reduce) {
+    background-color: rgba(18, 18, 21, 0.98);
+    backdrop-filter: none;
+  }
+}
+
+/* An inset well: search fields and code blocks, where the surface should read
+   as cut into the glass rather than floating on it. Inverts the highlight. */
+/* The primary action. Bright enough to lead the page while still carrying the
+   material, so it reads as lit glass rather than as a painted white pill.
+
+   This is a tier rather than a `bg-white` composed onto vd-glass-control,
+   because both would be setting background-color in the same layer and the
+   winner would come down to stylesheet order. Declaring it once removes the
+   ambiguity. */
+@utility vd-glass-bright {
+  position: relative;
+  background-color: rgba(255, 255, 255, 0.9);
+  background-image: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.55) 0%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  backdrop-filter: blur(12px) saturate(170%);
+  border: 1px solid rgba(255, 255, 255, 0.62);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.95),
+    0 2px 14px rgba(0, 0, 0, 0.38);
+  color: var(--color-ink);
+  transition:
+    background-color 150ms ease,
+    box-shadow 150ms ease;
+
+  &:hover {
+    background-color: rgba(255, 255, 255, 1);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 1),
+      0 4px 18px rgba(0, 0, 0, 0.45);
+  }
+
+  @media (prefers-reduced-transparency: reduce) {
+    backdrop-filter: none;
+  }
+}
+
+@utility vd-glass-well {
+  position: relative;
+  background-color: rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(8px) saturate(140%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow:
+    inset 0 1px 2px rgba(0, 0, 0, 0.5),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.05);
+
+  @media (prefers-reduced-transparency: reduce) {
+    background-color: rgba(12, 12, 14, 0.96);
+    backdrop-filter: none;
+  }
+}
+
+/* The specular streak across the top of a surface. Applied as a pseudo-element
+   so it never interferes with layout or clicks. Pair with a glass tier; it
+   inherits the radius, so it works on a pill and on a card alike. */
+@utility vd-sheen {
+  &::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    pointer-events: none;
+    background: linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.14) 0%,
+      rgba(255, 255, 255, 0.02) 42%,
+      transparent 60%
+    );
+  }
+}
+
+/* Hover lift for interactive glass. Kept as a utility so a card and a button
+   brighten by the same amount. */
+@utility vd-glass-hover {
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease,
+    box-shadow 150ms ease;
+
+  &:hover {
+    border-color: rgba(255, 255, 255, 0.26);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.3),
+      inset 0 -1px 0 rgba(255, 255, 255, 0.05),
+      0 12px 38px rgba(0, 0, 0, 0.5);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

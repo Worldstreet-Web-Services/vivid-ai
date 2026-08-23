@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 
+import { AmbientBackdrop } from "@/components/layout/ambient-backdrop";
 import { Sidebar } from "@/components/layout/sidebar";
 import { Topbar } from "@/components/layout/topbar";
 
@@ -11,7 +12,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);
 
   return (
-    <div className="flex h-dvh w-full overflow-hidden">
+    <div className="relative isolate flex h-dvh w-full overflow-hidden">
+      <AmbientBackdrop />
       <Sidebar collapsed={collapsed} onToggle={() => setCollapsed((prev) => !prev)} />
       <div className="flex min-w-0 flex-1 flex-col">
         <Topbar />

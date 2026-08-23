@@ -35,9 +35,9 @@ export function ChatLauncher({ statusSlot }: ChatLauncherProps) {
             type="button"
             onClick={() => setValue(suggestion.prompt)}
             className={cn(
-              "cursor-pointer rounded-full border border-white/12 px-3.5 py-2",
-              "text-[12.5px] font-medium text-white/70 transition-colors",
-              "hover:border-white/30 hover:text-white"
+              "vd-glass-control vd-sheen cursor-pointer rounded-full px-3.5 py-2",
+              "text-[12.5px] font-medium text-white/75",
+              "hover:border-white/28 hover:text-white"
             )}
           >
             {suggestion.label}
@@ -48,7 +48,7 @@ export function ChatLauncher({ statusSlot }: ChatLauncherProps) {
           type="button"
           aria-label="Show different prompts"
           onClick={() => setSeed((prev) => prev + 1)}
-          className="grid size-8 cursor-pointer place-items-center rounded-full text-white/45 transition-colors hover:bg-white/8 hover:text-white"
+          className="hover:vd-glass-control grid size-8 cursor-pointer place-items-center rounded-full text-white/45 transition-colors hover:text-white"
         >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
             <path

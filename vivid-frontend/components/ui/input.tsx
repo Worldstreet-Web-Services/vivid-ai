@@ -13,7 +13,7 @@ export function Input({ className, invalid, type = "text", ...props }: InputProp
       type={type}
       aria-invalid={invalid || undefined}
       className={cn(
-        "ws-inset h-11 w-full px-3.5 font-sans text-[14px] font-normal text-white transition-colors",
+        "vd-glass-well h-11 w-full rounded-[14px] px-3.5 font-sans text-[14px] font-normal text-white transition-colors",
         "focus-visible:outline-ring focus-visible:outline-2 focus-visible:outline-offset-2",
         "disabled:cursor-not-allowed disabled:opacity-50",
         invalid && "ws-invalid",
