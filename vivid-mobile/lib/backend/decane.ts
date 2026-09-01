@@ -1,21 +1,21 @@
-// Emailed sign-in codes through Decane Connect, identity only.
+// "Continue with Google" through Decane Connect: identity only.
 //
-// Decane delivers the code and issues the access token. It is not a separate
-// identity a user chooses: Vivid has one account, and this is how someone
-// proves they own the address on it. There are no third-party provider
-// buttons, so nothing here opens an auth sheet.
+// The Decane SDKs are embedded-WALLET kits: after Google confirms who the
+// user is, they go on to create a crypto wallet and demand a passkey or PIN
+// to encrypt the wallet's key share. Vivid only needs the identity, and
+// Decane hands that over BEFORE any wallet step: the callback URL carries
+// `decane_jwt`, the very access token our backend verifies. So this talks to
+// Decane's one relevant endpoint directly and never loads an SDK: no
+// passkey, no wallet, no PIN. Same flow as the web app.
 //
-// The Decane SDKs are embedded-WALLET kits: they go on to create a crypto
-// wallet and demand a passkey or PIN to encrypt the wallet's key share. Vivid
-// needs none of that, and Decane issues the token before any wallet step, so
-// this calls the two relevant endpoints directly and never loads an SDK. Same
-// flow as the web app.
-//
-// Flow: POST /auth/email/start sends the code, POST /auth/email/verify
-// exchanges it for the access token our backend verifies.
+// Flow: GET /auth/google/init -> the in-app browser sheet shows Google ->
+// Decane redirects to the API key's registered callback (`vivid://auth`) with
+// ?decane_jwt=... -> we exchange that for a Vivid session.
 
-import { DECANE_API_BASE, DECANE_API_KEY, DECANE_APP_ID } from "@/config/env";
-import { NETWORK_ERROR_MESSAGE, type DecaneProfile } from "@/lib/backend/client";
+import * as WebBrowser from "expo-web-browser";
+
+import { DECANE_API_BASE, DECANE_API_KEY, DECANE_APP_ID, DECANE_REDIRECT_URI } from "@/config/env";
+import { NETWORK_ERROR_MESSAGE, type GoogleProfile } from "@/lib/backend/client";
 
 export const decaneConfigured = Boolean(DECANE_APP_ID && DECANE_API_KEY);
 
@@ -58,12 +58,12 @@ interface EmailVerifyResponse {
   profile?: { name?: string | null; email?: string | null; picture?: string | null };
 }
 
-// Step two: the code buys the Decane access token our backend verifies to
-// open a Vivid session.
+// Step two: the code buys the same Decane access token the Google callback
+// returns, which our backend verifies to open a Vivid session.
 export async function verifyEmailCode(
   email: string,
   code: string
-): Promise<{ jwt: string; profile: DecaneProfile }> {
+): Promise<{ jwt: string; profile: GoogleProfile }> {
   const result = await decanePost<EmailVerifyResponse>("/auth/email/verify", { email, code });
   if (!result?.jwt) throw new Error("That code did not work. Ask for a new one.");
   return {
@@ -76,4 +76,57 @@ export async function verifyEmailCode(
       picture: result.profile?.picture ?? null,
     },
   };
+}
+
+export type GoogleReturn = { jwt: string; profile: GoogleProfile } | { error: string } | null;
+
+async function fetchConsentUrl(): Promise<string> {
+  let res: Response;
+  try {
+    res = await fetch(`${DECANE_API_BASE}/auth/google/init`, {
+      headers: { "X-API-Key": DECANE_API_KEY, "X-App-Id": DECANE_APP_ID },
+    });
+  } catch {
+    throw new Error(NETWORK_ERROR_MESSAGE);
+  }
+  if (!res.ok) {
+    let detail = `Google sign-in could not start (${res.status})`;
+    try {
+      const body = (await res.json()) as { error?: { message?: string } };
+      if (body.error?.message) detail = body.error.message;
+    } catch {
+      // keep the status message
+    }
+    throw new Error(detail);
+  }
+  const { url } = (await res.json()) as { url: string };
+  return url;
+}
+
+// Reads Decane's return params off the callback URL. Exported so it can be
+// unit tested without a browser.
+export function parseGoogleReturn(callbackUrl: string): GoogleReturn {
+  const query = callbackUrl.split("?")[1]?.split("#")[0] ?? "";
+  const params = new URLSearchParams(query);
+  const jwt = params.get("decane_jwt");
+  const error = params.get("decane_error");
+  if (!jwt && !error) return null;
+  if (error) return { error };
+  return {
+    jwt: jwt as string,
+    profile: {
+      name: params.get("decane_name"),
+      email: params.get("decane_email"),
+      picture: params.get("decane_picture"),
+    },
+  };
+}
+
+// Runs the whole consent round trip in the system auth sheet and resolves
+// with what Decane sent back, or null when the user dismissed the sheet.
+export async function signInWithGoogle(): Promise<GoogleReturn> {
+  const url = await fetchConsentUrl();
+  const result = await WebBrowser.openAuthSessionAsync(url, DECANE_REDIRECT_URI);
+  if (result.type !== "success") return null;
+  return parseGoogleReturn(result.url);
 }

@@ -135,9 +135,9 @@ export interface UserOut {
   created_at: string;
 }
 
-// Display-only details Decane passes back with the token. Never an identity
-// claim: the account is keyed on the token's own uid, backend side.
-export interface DecaneProfile {
+// Google's pass-through profile from the Decane callback. Display data for
+// the account, never an identity claim.
+export interface GoogleProfile {
   name?: string | null;
   email?: string | null;
   picture?: string | null;
@@ -197,9 +197,9 @@ export interface LocalFile {
 }
 
 export const backend = {
-  // Exchange a verified Decane access token for a Vivid session. The profile
-  // rides along so the account gets a name to show.
-  decaneLogin: (accessToken: string, profile: DecaneProfile = {}) =>
+  // Social sign-in: exchange a Decane access token for our own session. The
+  // Google profile (display-only) rides along so the account gets a name.
+  decaneLogin: (accessToken: string, profile: GoogleProfile = {}) =>
     request<TokenBundle>("/auth/decane", {
       method: "POST",
       json: { access_token: accessToken, ...profile },
