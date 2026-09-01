@@ -5,7 +5,7 @@
   "version": "1.0.0",
   "publisher": "vivid",
   "license": "UNLICENSED",
-  "icon": "media/icon.svg",
+  "icon": "media/icon.png",
   "engines": { "vscode": "^1.90.0" },
   "categories": ["AI"],
   "main": "./out/extension",

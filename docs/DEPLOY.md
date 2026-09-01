@@ -59,6 +59,11 @@ CORS_ORIGINS=["https://your-frontend-domain.com"]
 LLM_BASE_URL=https://<pod>-8000.proxy.runpod.net/v1
 LLM_MODEL=RedHatAI/gemma-3-27b-it-quantized.w4a16
 LLM_CONTEXT_TOKENS=16384
+# The coding model behind /v1 as `vivid-code` (Vivid Code, the VS Code
+# extension). Leave empty to serve that alias off the chat pod above.
+CODE_LLM_BASE_URL=https://<pod>-8000.proxy.runpod.net/v1
+CODE_LLM_MODEL=
+CODE_LLM_CONTEXT_TOKENS=100000
 MAX_REPLY_TOKENS=6144
 HISTORY_TOKEN_BUDGET=8000
 ASR_BASE_URL=https://<pod>-8002.proxy.runpod.net

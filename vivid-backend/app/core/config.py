@@ -43,6 +43,11 @@ class Settings(BaseSettings):
     # Model services on RunPod. Nothing else in the codebase may know these.
     LLM_BASE_URL: str = ""    # OpenAI-compatible root incl. /v1, e.g. https://<pod>-8000.proxy.runpod.net/v1
     LLM_MODEL: str = "RedHatAI/gemma-3-27b-it-quantized.w4a16"
+    # The coding model (Devstral), served by its own pod. Empty falls back to
+    # the chat pod above, so a single-pod deployment still answers `vivid-code`.
+    CODE_LLM_BASE_URL: str = ""
+    CODE_LLM_MODEL: str = ""
+    CODE_LLM_CONTEXT_TOKENS: int = 100_000  # the coder pod's max_model_len
     ASR_BASE_URL: str = ""        # STT server: /transcribe /health
     TTS_BASE_URL: str = ""        # TTS server: /speak /health (falls back to ASR_BASE_URL)
     TRANSLATE_BASE_URL: str = ""  # MADLAD server: /translate (falls back to ASR_BASE_URL)
@@ -107,6 +112,19 @@ class Settings(BaseSettings):
     # ~0.2s/clip; WazobiaVoice is ~6s/clip regardless of length, and yo/ig
     # must translate the full text first — those get one clip at the end).
     TTS_STREAM_LANGS: list[str] = ["en"]
+
+    # --- /v1 model proxy (Vivid Code, the VS Code extension, the editor) ---
+    # Developer tools speak OpenAI over /v1/chat/completions. They point here
+    # rather than at a pod so every call carries a Vivid identity. Turning this
+    # off leaves those clients with nowhere to go — it is not a safe default.
+    MODEL_PROXY_ENABLED: bool = True
+    # Ceiling on max_tokens for one proxied reply. A tool-calling agent asks
+    # for a lot; this stops a single client reserving the whole KV cache.
+    MODEL_PROXY_MAX_TOKENS: int = 16384
+    # Proxy calls a minute, per credential. Separate from RATE_LIMIT_PER_MINUTE
+    # because an agent loop makes many small calls per human action, where a
+    # chat turn makes one.
+    MODEL_PROXY_RATE_LIMIT_PER_MINUTE: int = 120
 
     # Limits
     RATE_LIMIT_PER_MINUTE: int = 20

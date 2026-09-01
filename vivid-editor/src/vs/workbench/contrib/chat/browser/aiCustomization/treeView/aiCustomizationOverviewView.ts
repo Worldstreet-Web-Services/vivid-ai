@@ -3,35 +3,38 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import './media/aiCustomizationManagement.css';
-import * as DOM from '../../../../base/browser/dom.js';
-import { CancellationToken } from '../../../../base/common/cancellation.js';
-import { autorun } from '../../../../base/common/observable.js';
-import { ThemeIcon } from '../../../../base/common/themables.js';
-import { localize } from '../../../../nls.js';
-import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
-import { IViewPaneOptions, ViewPane } from '../../../../workbench/browser/parts/views/viewPane.js';
-import { IViewDescriptorService } from '../../../../workbench/common/views.js';
-import { IKeybindingService } from '../../../../platform/keybinding/common/keybinding.js';
-import { IContextMenuService } from '../../../../platform/contextview/browser/contextView.js';
-import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
-import { IContextKeyService } from '../../../../platform/contextkey/common/contextkey.js';
-import { IOpenerService } from '../../../../platform/opener/common/opener.js';
-import { IThemeService } from '../../../../platform/theme/common/themeService.js';
-import { IHoverService } from '../../../../platform/hover/browser/hover.js';
-import { ResourceSet } from '../../../../base/common/map.js';
-import { IPromptsService } from '../../../../workbench/contrib/chat/common/promptSyntax/service/promptsService.js';
-import { PromptsType } from '../../../../workbench/contrib/chat/common/promptSyntax/promptTypes.js';
-import { AICustomizationManagementSection, AI_CUSTOMIZATION_MANAGEMENT_EDITOR_ID } from '../../../../workbench/contrib/chat/browser/aiCustomization/aiCustomizationManagement.js';
-import { AICustomizationManagementEditorInput } from '../../../../workbench/contrib/chat/browser/aiCustomization/aiCustomizationManagementEditorInput.js';
-import { agentIcon, instructionsIcon, mcpServerIcon, pluginIcon, skillIcon, toolsIcon } from '../../../../workbench/contrib/chat/browser/aiCustomization/aiCustomizationIcons.js';
-import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
-import { IAICustomizationWorkspaceService } from '../../../../workbench/contrib/chat/common/aiCustomizationWorkspaceService.js';
-import { IEditorService } from '../../../../workbench/services/editor/common/editorService.js';
-import { IMcpService } from '../../../../workbench/contrib/mcp/common/mcpTypes.js';
-import { IAgentPluginService } from '../../../../workbench/contrib/chat/common/plugins/agentPluginService.js';
-import { ILanguageModelToolsService } from '../../../../workbench/contrib/chat/common/tools/languageModelToolsService.js';
-import { AGENT_HOST_COPILOT_CLI_SESSION_TYPE, countEnabledCustomizationTools, IAgentHostToolSetEnablementService } from '../../../../workbench/contrib/chat/browser/agentSessions/agentHost/agentHostToolSetEnablementService.js';
+// Resolved one level up, where the stylesheet actually lives. In the previous
+// location this pointed at a `media/` folder that never contained it, so the
+// overview rendered unstyled; moving next to the real file fixes that.
+import '../media/aiCustomizationManagement.css';
+import * as DOM from '../../../../../../base/browser/dom.js';
+import { CancellationToken } from '../../../../../../base/common/cancellation.js';
+import { autorun } from '../../../../../../base/common/observable.js';
+import { ThemeIcon } from '../../../../../../base/common/themables.js';
+import { localize } from '../../../../../../nls.js';
+import { IInstantiationService } from '../../../../../../platform/instantiation/common/instantiation.js';
+import { IViewPaneOptions, ViewPane } from '../../../../../../workbench/browser/parts/views/viewPane.js';
+import { IViewDescriptorService } from '../../../../../../workbench/common/views.js';
+import { IKeybindingService } from '../../../../../../platform/keybinding/common/keybinding.js';
+import { IContextMenuService } from '../../../../../../platform/contextview/browser/contextView.js';
+import { IConfigurationService } from '../../../../../../platform/configuration/common/configuration.js';
+import { IContextKeyService } from '../../../../../../platform/contextkey/common/contextkey.js';
+import { IOpenerService } from '../../../../../../platform/opener/common/opener.js';
+import { IThemeService } from '../../../../../../platform/theme/common/themeService.js';
+import { IHoverService } from '../../../../../../platform/hover/browser/hover.js';
+import { ResourceSet } from '../../../../../../base/common/map.js';
+import { IPromptsService } from '../../../../../../workbench/contrib/chat/common/promptSyntax/service/promptsService.js';
+import { PromptsType } from '../../../../../../workbench/contrib/chat/common/promptSyntax/promptTypes.js';
+import { AICustomizationManagementSection, AI_CUSTOMIZATION_MANAGEMENT_EDITOR_ID } from '../../../../../../workbench/contrib/chat/browser/aiCustomization/aiCustomizationManagement.js';
+import { AICustomizationManagementEditorInput } from '../../../../../../workbench/contrib/chat/browser/aiCustomization/aiCustomizationManagementEditorInput.js';
+import { agentIcon, instructionsIcon, mcpServerIcon, pluginIcon, skillIcon, toolsIcon } from '../../../../../../workbench/contrib/chat/browser/aiCustomization/aiCustomizationIcons.js';
+import { IWorkspaceContextService } from '../../../../../../platform/workspace/common/workspace.js';
+import { IAICustomizationWorkspaceService } from '../../../../../../workbench/contrib/chat/common/aiCustomizationWorkspaceService.js';
+import { IEditorService } from '../../../../../../workbench/services/editor/common/editorService.js';
+import { IMcpService } from '../../../../../../workbench/contrib/mcp/common/mcpTypes.js';
+import { IAgentPluginService } from '../../../../../../workbench/contrib/chat/common/plugins/agentPluginService.js';
+import { ILanguageModelToolsService } from '../../../../../../workbench/contrib/chat/common/tools/languageModelToolsService.js';
+import { AGENT_HOST_COPILOT_CLI_SESSION_TYPE, countEnabledCustomizationTools, IAgentHostToolSetEnablementService } from '../../../../../../workbench/contrib/chat/browser/agentSessions/agentHost/agentHostToolSetEnablementService.js';
 
 const $ = DOM.$;
 

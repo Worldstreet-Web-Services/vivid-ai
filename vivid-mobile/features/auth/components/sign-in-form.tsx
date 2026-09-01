@@ -8,59 +8,28 @@ import { MailIcon } from "@/components/ui/icons";
 import { Input } from "@/components/ui/input";
 import { AppText } from "@/components/ui/text";
 import { AuthCard } from "@/features/auth/components/auth-card";
-import { ProviderButton } from "@/features/auth/components/provider-buttons";
 import { validateEmail } from "@/features/auth/lib/validation";
 import { useTheme } from "@/hooks/use-theme";
-import { backend, setTokens } from "@/lib/backend/client";
-import { decaneConfigured, signInWithGoogle, startEmailSignIn } from "@/lib/backend/decane";
+import { decaneConfigured, startEmailSignIn } from "@/lib/backend/decane";
 
 const NOT_CONFIGURED =
   "Sign-in isn't configured yet (set EXPO_PUBLIC_DECANE_APP_ID and EXPO_PUBLIC_DECANE_API_KEY).";
 
-// Passwordless. Identity is Decane's job: Google through the system auth
-// sheet, or a code emailed to the address you type. Nothing here ever holds a
-// password.
+// One way in: a Vivid account, opened with a code emailed to the address you
+// type. There are no third-party sign-in buttons. Every Vivid surface, the web
+// app, this app, the CLI and the editor, authenticates against the same
+// account, so identity stays ours rather than a provider's.
 //
-// There is no navigation on a Google success: setting the tokens flips the
-// root stack's guard and the app shell takes over. The email path needs the
-// code screen first.
+// Decane is the delivery mechanism for the code, not a separate identity. It
+// never sees a password, because there is none.
 export function SignInForm() {
   const router = useRouter();
   const { theme } = useTheme();
   const [email, setEmail] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [finishingGoogle, setFinishingGoogle] = useState(false);
 
-  async function googleSignIn() {
-    if (!decaneConfigured) {
-      setError(NOT_CONFIGURED);
-      return;
-    }
-    setError(null);
-    setNotice(null);
-    setSubmitting(true);
-    try {
-      const returned = await signInWithGoogle();
-      // A dismissed sheet is not an error; the form is simply back.
-      if (!returned) return;
-      if ("error" in returned) {
-        setError(`Google sign-in failed: ${returned.error}`);
-        return;
-      }
-      setFinishingGoogle(true);
-      const tokens = await backend.decaneLogin(returned.jwt, returned.profile);
-      setTokens(tokens);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Google sign-in failed");
-    } finally {
-      setSubmitting(false);
-      setFinishingGoogle(false);
-    }
-  }
-
-  async function emailSignIn() {
+  async function signIn() {
     const problem = validateEmail(email);
     if (problem) {
       setError(problem);
@@ -71,7 +40,6 @@ export function SignInForm() {
       return;
     }
     setError(null);
-    setNotice(null);
     setSubmitting(true);
     const address = email.trim().toLowerCase();
     try {
@@ -86,7 +54,7 @@ export function SignInForm() {
 
   return (
     <AuthCard
-      title="Sign in to Vivid"
+      title="Sign in with Vivid"
       subtitle="Ask anything, and see it come to life."
       footer={
         <AppText size={12.5} weight="regular" tone={0.45} align="center">
@@ -102,38 +70,6 @@ export function SignInForm() {
         </AppText>
       }
     >
-      {finishingGoogle ? (
-        <AppText size={13} tone={0.6} align="center" style={{ marginBottom: 16 }}>
-          Finishing Google sign-in…
-        </AppText>
-      ) : null}
-
-      <View style={{ gap: 10 }}>
-        <ProviderButton provider="google" onPress={googleSignIn} disabled={submitting} />
-        <ProviderButton
-          provider="kingschat"
-          comingSoon
-          onPress={() => {
-            setError(null);
-            setNotice("KingsChat sign-in is coming soon. Use Google or your email for now.");
-          }}
-        />
-      </View>
-
-      {notice ? (
-        <AppText size={12.5} tone={0.55} align="center" style={{ marginTop: 12 }}>
-          {notice}
-        </AppText>
-      ) : null}
-
-      <View style={{ flexDirection: "row", alignItems: "center", gap: 12, marginVertical: 20 }}>
-        <View style={{ flex: 1, height: 1, backgroundColor: theme.fg(0.1) }} />
-        <AppText size={11.5} tone={0.35} uppercase style={{ letterSpacing: 0.6 }}>
-          or
-        </AppText>
-        <View style={{ flex: 1, height: 1, backgroundColor: theme.fg(0.1) }} />
-      </View>
-
       <View style={{ gap: 16 }}>
         <Field label="Email" error={error ?? undefined}>
           <Input
@@ -144,7 +80,6 @@ export function SignInForm() {
             onChangeText={(value) => {
               setEmail(value);
               if (error) setError(null);
-              if (notice) setNotice(null);
             }}
             keyboardType="email-address"
             autoCapitalize="none"
@@ -152,16 +87,16 @@ export function SignInForm() {
             autoComplete="email"
             textContentType="emailAddress"
             returnKeyType="go"
-            onSubmitEditing={() => void emailSignIn()}
+            onSubmitEditing={() => void signIn()}
           />
         </Field>
 
         <Button
-          label="Continue with email"
-          loading={submitting && !finishingGoogle}
+          label="Continue"
+          loading={submitting}
           disabled={submitting}
           fullWidth
-          onPress={() => void emailSignIn()}
+          onPress={() => void signIn()}
         />
       </View>
 

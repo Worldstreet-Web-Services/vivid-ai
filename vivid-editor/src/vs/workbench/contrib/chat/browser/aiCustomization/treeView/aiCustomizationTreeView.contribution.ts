@@ -3,27 +3,22 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { localize, localize2 } from '../../../../nls.js';
-import { Action2, MenuRegistry, registerAction2 } from '../../../../platform/actions/common/actions.js';
-import { ContextKeyExpr } from '../../../../platform/contextkey/common/contextkey.js';
-import { ServicesAccessor } from '../../../../platform/instantiation/common/instantiation.js';
-import { AI_CUSTOMIZATION_CATEGORY, AI_CUSTOMIZATION_VIEW_ID, AICustomizationItemMenuId, FOCUS_AI_CUSTOMIZATION_VIEW_ID } from './aiCustomizationTreeView.js';
+import { localize, localize2 } from '../../../../../../nls.js';
+import { Action2, MenuRegistry, registerAction2 } from '../../../../../../platform/actions/common/actions.js';
+import { ContextKeyExpr } from '../../../../../../platform/contextkey/common/contextkey.js';
+import { ServicesAccessor } from '../../../../../../platform/instantiation/common/instantiation.js';
+import { AI_CUSTOMIZATION_VIEW_ID, AICustomizationItemMenuId } from './aiCustomizationTreeView.js';
 import { AICustomizationItemDisabledContextKey, AICustomizationItemStorageContextKey, AICustomizationItemTypeContextKey, AICustomizationViewPane } from './aiCustomizationTreeViewViews.js';
-import { PromptsType } from '../../../../workbench/contrib/chat/common/promptSyntax/promptTypes.js';
-import { Codicon } from '../../../../base/common/codicons.js';
-import { ICommandService } from '../../../../platform/commands/common/commands.js';
-import { URI } from '../../../../base/common/uri.js';
-import { IEditorService } from '../../../../workbench/services/editor/common/editorService.js';
-import { IFileService, FileSystemProviderCapabilities } from '../../../../platform/files/common/files.js';
-import { IClipboardService } from '../../../../platform/clipboard/common/clipboardService.js';
-import { IDialogService } from '../../../../platform/dialogs/common/dialogs.js';
-import { IPromptsService, PromptsStorage } from '../../../../workbench/contrib/chat/common/promptSyntax/service/promptsService.js';
-import { IViewsService } from '../../../../workbench/services/views/common/viewsService.js';
-import { KeyCode, KeyMod } from '../../../../base/common/keyCodes.js';
-import { KeybindingWeight } from '../../../../platform/keybinding/common/keybindingsRegistry.js';
-import { SessionsView, SessionsViewId } from '../../sessions/browser/views/sessionsView.js';
-import { IsSessionsWindowContext } from '../../../../workbench/common/contextkeys.js';
-import { TerminalContextKeys } from '../../../../workbench/contrib/terminal/common/terminalContextKey.js';
+import { PromptsType } from '../../../../../../workbench/contrib/chat/common/promptSyntax/promptTypes.js';
+import { IViewsService } from '../../../../../../workbench/services/views/common/viewsService.js';
+import { Codicon } from '../../../../../../base/common/codicons.js';
+import { ICommandService } from '../../../../../../platform/commands/common/commands.js';
+import { URI } from '../../../../../../base/common/uri.js';
+import { IEditorService } from '../../../../../../workbench/services/editor/common/editorService.js';
+import { IFileService, FileSystemProviderCapabilities } from '../../../../../../platform/files/common/files.js';
+import { IClipboardService } from '../../../../../../platform/clipboard/common/clipboardService.js';
+import { IDialogService } from '../../../../../../platform/dialogs/common/dialogs.js';
+import { IPromptsService, PromptsStorage } from '../../../../../../workbench/contrib/chat/common/promptSyntax/service/promptsService.js';
 
 //#region Utilities
 
@@ -282,32 +277,6 @@ MenuRegistry.appendMenuItem(AICustomizationItemMenuId, {
 		ContextKeyExpr.equals(AICustomizationItemStorageContextKey.key, PromptsStorage.builtIn),
 		ContextKeyExpr.equals(AICustomizationItemTypeContextKey.key, PromptsType.skill),
 	),
-});
-
-//#endregion
-
-//#region Focus Action
-
-registerAction2(class extends Action2 {
-	constructor() {
-		super({
-			id: FOCUS_AI_CUSTOMIZATION_VIEW_ID,
-			title: localize2('focusCustomizations', "Focus Chat Customizations"),
-			category: AI_CUSTOMIZATION_CATEGORY,
-			precondition: IsSessionsWindowContext,
-			f1: true,
-			keybinding: {
-				weight: KeybindingWeight.WorkbenchContrib,
-				primary: KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.KeyC,
-				when: ContextKeyExpr.and(IsSessionsWindowContext, TerminalContextKeys.focus.negate()),
-			},
-		});
-	}
-	async run(accessor: ServicesAccessor): Promise<void> {
-		const viewsService = accessor.get(IViewsService);
-		const sessionsView = await viewsService.openView<SessionsView>(SessionsViewId, false);
-		sessionsView?.focusCustomizations();
-	}
 });
 
 //#endregion

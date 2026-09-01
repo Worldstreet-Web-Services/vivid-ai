@@ -1,23 +1,44 @@
-import { parseGoogleReturn } from "./decane";
+import { verifyEmailCode } from "./decane";
 
-describe("parseGoogleReturn", () => {
-  it("returns null when the URL carries no Decane params", () => {
-    expect(parseGoogleReturn("vivid://auth")).toBeNull();
-    expect(parseGoogleReturn("vivid://auth?foo=bar")).toBeNull();
+describe("verifyEmailCode", () => {
+  const originalFetch = globalThis.fetch;
+
+  function answerWith(body: unknown, ok = true) {
+    globalThis.fetch = jest.fn().mockResolvedValue({
+      ok,
+      status: ok ? 200 : 400,
+      json: async () => body,
+    }) as unknown as typeof fetch;
+  }
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    jest.restoreAllMocks();
   });
 
-  it("reads the token and the pass-through profile", () => {
-    const url =
-      "vivid://auth?decane_jwt=abc.def.ghi&decane_name=Ada%20Lovelace&decane_email=ada%40example.com&decane_picture=https%3A%2F%2Fx%2Fp.png";
-    expect(parseGoogleReturn(url)).toEqual({
+  it("falls back to the address the code was sent to", async () => {
+    // Decane does not echo the address back, and it is the one thing we know
+    // for certain: the code only reaches the inbox that owns it.
+    answerWith({ jwt: "abc.def.ghi", profile: { name: "Ada Lovelace" } });
+
+    await expect(verifyEmailCode("ada@example.com", "123456")).resolves.toEqual({
       jwt: "abc.def.ghi",
-      profile: { name: "Ada Lovelace", email: "ada@example.com", picture: "https://x/p.png" },
+      profile: { name: "Ada Lovelace", email: "ada@example.com", picture: null },
     });
   });
 
-  it("surfaces an error param", () => {
-    expect(parseGoogleReturn("vivid://auth?decane_error=access_denied")).toEqual({
-      error: "access_denied",
-    });
+  it("prefers the address Decane reports when it sends one", async () => {
+    answerWith({ jwt: "abc.def.ghi", profile: { email: "ada@work.example" } });
+
+    const result = await verifyEmailCode("ada@example.com", "123456");
+    expect(result.profile.email).toBe("ada@work.example");
+  });
+
+  it("rejects a response with no token", async () => {
+    answerWith({ isNewUser: true });
+
+    await expect(verifyEmailCode("ada@example.com", "000000")).rejects.toThrow(
+      "That code did not work. Ask for a new one."
+    );
   });
 });
