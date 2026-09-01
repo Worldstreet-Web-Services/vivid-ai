@@ -43,16 +43,44 @@ class Settings(BaseSettings):
     # Model services on RunPod. Nothing else in the codebase may know these.
     LLM_BASE_URL: str = ""    # OpenAI-compatible root incl. /v1, e.g. https://<pod>-8000.proxy.runpod.net/v1
     LLM_MODEL: str = "RedHatAI/gemma-3-27b-it-quantized.w4a16"
-    # The coding model (Devstral), served by its own pod. Empty falls back to
-    # the chat pod above, so a single-pod deployment still answers `vivid-code`.
-    CODE_LLM_BASE_URL: str = ""
-    CODE_LLM_MODEL: str = ""
-    CODE_LLM_CONTEXT_TOKENS: int = 100_000  # the coder pod's max_model_len
     ASR_BASE_URL: str = ""        # STT server: /transcribe /health
     TTS_BASE_URL: str = ""        # TTS server: /speak /health (falls back to ASR_BASE_URL)
     TRANSLATE_BASE_URL: str = ""  # MADLAD server: /translate (falls back to ASR_BASE_URL)
     EMBEDDINGS_URL: str = ""  # optional; empty disables vector search (full-text still works)
     EMBEDDING_DIM: int = 768
+
+    # --- Coding model (Devstral on RunPod) -------------------------------
+    # Serves the /ws/code agent, which is a different animal from the chat
+    # assistant: native tool calling, long loops, 100k context. Kept on its own
+    # endpoint so the two never contend for the same GPU. Empty falls back to
+    # LLM_BASE_URL, which will work but will be slow and share capacity.
+    # vLLM MUST be started with --enable-auto-tool-choice --tool-call-parser
+    # mistral; /v1/health/code reports it when it was not.
+    CODE_LLM_BASE_URL: str = ""
+    CODE_LLM_MODEL: str = "cyankiwi/Devstral-Small-2-24B-Instruct-2512-AWQ-4bit"
+    CODE_LLM_TEMPERATURE: float = 0.15  # agentic edits want determinism, not variety
+    CODE_LLM_TOP_P: float = 0.95
+    CODE_LLM_TIMEOUT: int = 180
+    CODE_MAX_REPLY_TOKENS: int = 4096
+    # Served max_model_len is 100k; the loop budgets below it so a long tool
+    # result cannot push a request over the served limit mid-session.
+    CODE_CONTEXT_TOKENS: int = 90000
+    # The served window itself, as advertised to clients through /v1/models.
+    # Distinct from CODE_CONTEXT_TOKENS above: that is the loop's self-imposed
+    # budget, this is what the pod will actually accept, and a client sizing
+    # its own context needs the real number.
+    CODE_LLM_CONTEXT_TOKENS: int = 100_000
+    # Tool calls per user turn. Real refactors run 20-40; the cap is a runaway
+    # guard, and hitting it ends the turn cleanly rather than erroring.
+    CODE_MAX_STEPS: int = 50
+    # Whole-turn restarts when the stream breaks mid-flight. The RunPod proxy
+    # drops long streams; without this a twelve-step session dies at step
+    # twelve. Safe because a half-streamed turn leaves the conversation
+    # untouched (see code_agent._turn).
+    CODE_STREAM_RETRIES: int = 3
+    # One tool result's ceiling. A 4000-line file read whole would otherwise
+    # evict everything the model has learned so far.
+    CODE_MAX_TOOL_RESULT_CHARS: int = 60000
 
     # Tool loop (runs in the backend, never on the pod)
     TOOLS_ENABLED: bool = True

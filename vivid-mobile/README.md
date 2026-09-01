@@ -19,7 +19,7 @@ hands-free calls).
 
 ```sh
 pnpm install
-cp .env.example .env      # then fill in EXPO_PUBLIC_API_URL (a LAN IP, not localhost)
+cp .env.example .env      # defaults to the live backend; use a LAN IP (not localhost) for a local one
 pnpm prebuild             # generates ios/ and android/
 npx expo run:ios          # or: npx expo run:android
 ```
