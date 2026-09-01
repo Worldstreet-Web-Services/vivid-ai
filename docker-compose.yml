@@ -1,3 +1,13 @@
+# Development stack. For a server, use deploy/docker-compose.prod.yml — and
+# always pass it with -f: `docker compose up -d` run anywhere under this
+# directory finds THIS file, which is how a dev stack ends up on a VPS.
+#
+# Published ports bind to loopback and are overridable, so they neither collide
+# with whatever else the host runs nor expose a dev-credentialled Postgres,
+# Redis or MinIO to the internet. Override in a root .env, e.g. POSTGRES_PORT=5433.
+# Docker writes iptables rules directly and bypasses ufw, so a published port
+# is reachable whatever ufw claims — the bind address is the actual control.
+
 x-backend-env: &backend-env
   DATABASE_URL: postgresql+asyncpg://vivid:vivid@postgres:5432/vivid
   REDIS_URL: redis://redis:6379/0
@@ -37,7 +47,7 @@ services:
       POSTGRES_PASSWORD: vivid
       POSTGRES_DB: vivid
     ports:
-      - "5432:5432"
+      - "${POSTGRES_BIND:-127.0.0.1}:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -49,7 +59,7 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "${REDIS_BIND:-127.0.0.1}:${REDIS_PORT:-6379}:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -63,8 +73,8 @@ services:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "${MINIO_BIND:-127.0.0.1}:${MINIO_PORT:-9000}:9000"
+      - "${MINIO_BIND:-127.0.0.1}:${MINIO_CONSOLE_PORT:-9001}:9001"
     volumes:
       - miniodata:/data
     healthcheck:
@@ -110,7 +120,7 @@ services:
       # the host path is reliable.
       network: host
     ports:
-      - "8000:8000"
+      - "${BACKEND_BIND:-127.0.0.1}:${BACKEND_PORT:-8000}:8000"
     environment:
       <<: *backend-env
     volumes:

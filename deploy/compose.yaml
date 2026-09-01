@@ -1,0 +1,13 @@
+# Guard file. Without it, `docker compose up -d` run from this directory finds
+# no compose file here, walks up to the repository root, and starts the DEV
+# stack — dev credentials, ports on every interface — on whatever box you are
+# standing on. That has happened; hence this file.
+#
+# With it, a bare `docker compose up -d` in deploy/ runs the production stack.
+#
+# Building on the box still needs both files named explicitly, because the
+# build overlay is deliberately opt-in:
+#
+#   docker compose -f docker-compose.prod.yml -f docker-compose.build.yml up -d --build
+include:
+  - docker-compose.prod.yml
