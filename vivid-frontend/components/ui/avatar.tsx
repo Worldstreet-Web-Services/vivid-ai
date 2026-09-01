@@ -20,8 +20,9 @@ interface AvatarProps {
   className?: string;
 }
 
-// Photo when the account has one, initials otherwise, and initials again if
-// the photo fails to load: a broken <img> is a worse fallback than a letter.
+// Photo when there is one (Google sign-in supplies it), initials otherwise —
+// and initials again if the photo fails to load, since a broken <img> is a
+// worse fallback than a letter.
 export function Avatar({ name, src, size = "md", className }: AvatarProps) {
   const [broken, setBroken] = useState(false);
   const showImage = Boolean(src) && !broken;
