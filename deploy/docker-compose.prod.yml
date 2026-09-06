@@ -15,6 +15,12 @@
 # development default. JWT_SECRET is the one that matters most: it lives in
 # app.env, and its code default ("change-me-in-prod") signs valid tokens.
 
+# Pinned so the stack has ONE identity however it is invoked. Compose otherwise
+# names the project after whatever directory it resolved from — "deploy" from
+# here, "vivid-ai" from the repo root — and two names mean two separate stacks
+# with separate volumes, silently.
+name: vivid
+
 x-backend-env: &backend-env
   # Infrastructure wiring is fixed here so app.env cannot break it. Compose
   # applies `environment` after `env_file`, so these win on conflict.

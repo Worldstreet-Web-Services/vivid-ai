@@ -9,5 +9,7 @@
 # build overlay is deliberately opt-in:
 #
 #   docker compose -f docker-compose.prod.yml -f docker-compose.build.yml up -d --build
+name: vivid
+
 include:
   - docker-compose.prod.yml
