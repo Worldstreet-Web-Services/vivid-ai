@@ -35,13 +35,13 @@ def main() -> int:
         Template()
         .from_node_image("22")
         # git for snapshots and file listing; bash for the tools' shell.
+        # Build steps run as `user` unless told otherwise; only apt needs root.
         .run_cmd("apt-get update && apt-get install -y --no-install-recommends git bash "
-                 "&& rm -rf /var/lib/apt/lists/*")
-        .run_cmd("id user >/dev/null 2>&1 || useradd -m -u 1000 -s /bin/bash user")
+                 "&& rm -rf /var/lib/apt/lists/*", user="root")
+        .run_cmd(f"mkdir -p {APP} && chown -R user:user /home/user", user="root")
         .set_workdir(APP)
         .copy(FILES, f"{APP}/", user="user")
         .copy("src", f"{APP}/src", user="user")
-        .run_cmd(f"chown -R user:user {APP}")
         .run_cmd("npm install --no-audit --no-fund", user="user")
         .run_cmd("git init -q -b main && git config user.name Vivid "
                  "&& git config user.email builder@vivid "
