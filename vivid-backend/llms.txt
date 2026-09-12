@@ -1,0 +1,326 @@
+# Vivid Builder API: integration guide for frontend developers
+
+This file is for a frontend or mobile developer wiring a UI to the Vivid app
+builder. It describes every endpoint, the streaming protocol, what to render,
+and the order things happen in. It is exact as of the backend on branch
+feat/app-builder. The human-readable design notes are in docs/builder.md and
+DECISIONS.md at the repo root.
+
+Base URL: the backend origin plus /v1 (dev: http://localhost:8000/v1).
+Auth: every request carries `Authorization: Bearer <access token>` (the same
+JWT the Vivid apps use; a `vivid_` API key also works). Errors come as
+`{"error": {"code", "message", "request_id"}, "detail": "..."}` with the HTTP
+status. Codes worth branching on: busy (409), rate_limited (429),
+not_configured (503), sandbox_unavailable (503), snapshot_failed (503),
+bad_asset (400), not_found (404).
+
+------------------------------------------------------------------------
+## 1. The mental model
+
+A project is a chat thread plus a live app in a cloud sandbox. Every message
+the user sends is one "turn". The backend answers a turn as a Server-Sent
+Events stream in the AI SDK UI Message Stream (v1) format, so a client
+built on Vercel's `useChat` can consume it with no adapter; a hand-written
+client parses `data: <json>` lines.
+
+Lifecycle of a project:
+
+1. create it (mode = "plan")
+2. plan turns: the first message is expanded into a brief, then the model
+   asks questions (rendered as cards), the user answers in text, the model
+   writes a spec; the user may edit the spec
+3. POST /build flips mode to "build"
+4. build turns: the model writes the app; the preview iframe shows it; every
+   changing turn stores a snapshot (a version)
+5. optional: link Supabase (data and auth), enable Paystack (payments),
+   upload assets (logo, photos) at any point
+6. publish: a background job builds and puts the app on a live URL
+
+Timing to design for: a plan turn is 15 to 90 seconds; a first build with
+generated images is 15 to 25 minutes on the current models; an edit turn is
+1 to 3 minutes; a publish is 1 to 3 minutes. Show progress, not a spinner.
+
+------------------------------------------------------------------------
+## 2. Projects
+
+POST   /builder/projects            {name?: string, skip_plan?: boolean}   -> Project (201)
+GET    /builder/projects                                                  -> Project[]
+GET    /builder/projects/{id}                                             -> Project
+PATCH  /builder/projects/{id}       {name?, spec_md?}                     -> Project
+DELETE /builder/projects/{id}                                             -> 204 (kills sandbox, deletes snapshots and files)
+
+Project:
+{
+  id, name,
+  mode: "plan" | "build",
+  brief_md: string | null,        // written by the prompt builder from the first message
+  spec_md: string | null,         // the agreed spec; editable in plan mode
+  current_snapshot_id: string | null,
+  backend_mode: "none" | "byo" | "cloud",
+  supabase_project_ref: string | null,
+  payments_provider: "none" | "paystack",
+  published_url: string | null,
+  created_at, updated_at
+}
+
+`skip_plan: true` creates the project in build mode (for developers who
+know what they want). Non-technical users should always go through plan
+mode.
+
+------------------------------------------------------------------------
+## 3. The chat turn (the core of the UI)
+
+POST /builder/projects/{id}/chat
+Body: {"text": string, "images"?: string[]}   // images: https or data URLs, max 4, plan mode only (reference screenshots)
+Response: 200, Content-Type text/event-stream, header x-vercel-ai-ui-message-stream: v1
+
+One turn per project at a time: a second POST while one runs is 409 busy.
+Cancel with POST /builder/projects/{id}/cancel -> {"cancelled": boolean}.
+Rate limit: 429 rate_limited (10 turns a minute per user).
+
+Reading the stream with fetch (SSE over POST, so EventSource cannot be used):
+
+```ts
+const res = await fetch(`${BASE}/builder/projects/${id}/chat`, {
+  method: "POST",
+  headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+  body: JSON.stringify({ text }),
+});
+const reader = res.body!.getReader();
+const decoder = new TextDecoder();
+let buf = "";
+for (;;) {
+  const { value, done } = await reader.read();
+  if (done) break;
+  buf += decoder.decode(value, { stream: true });
+  let i;
+  while ((i = buf.indexOf("\n\n")) !== -1) {
+    const frame = buf.slice(0, i); buf = buf.slice(i + 2);
+    const line = frame.split("\n").find((l) => l.startsWith("data: "));
+    if (!line) continue;
+    const payload = line.slice(6);
+    if (payload === "[DONE]") return;
+    handle(JSON.parse(payload));
+  }
+}
+```
+
+With the AI SDK instead: `useChat({ transport: new DefaultChatTransport({ api: <url>, headers }) })`
+where the URL points at this route (or at a same-origin route that pipes it
+through unchanged). The message parts below are exactly what `useChat`
+produces in `message.parts`.
+
+### Parts, in the order they arrive
+
+Every part is `{"type": ..., ...}`. Render by type; ignore unknown types.
+
+Text (the model talking to the user):
+  {"type":"text-start","id":"txt_x"}
+  {"type":"text-delta","id":"txt_x","delta":"..."}      append to the text with that id
+  {"type":"text-end","id":"txt_x"}
+
+Steps (a model call plus its tool calls):
+  {"type":"start-step"}  {"type":"finish-step"}         count them for "step 7 of 40"
+
+Tool calls (what the agent is doing; show as a compact activity row):
+  {"type":"tool-input-available","toolCallId":"c1","toolName":"write_file","input":{...}}
+  {"type":"tool-output-available","toolCallId":"c1","output":"Wrote src/App.tsx (2131 chars).\nTypecheck: clean."}
+  {"type":"tool-output-error","toolCallId":"c1","errorText":"error: ..."}
+  Tool names and the label to show:
+    read_file            "Reading src/App.tsx"
+    write_file           "Writing src/pages/Shop.tsx"
+    edit_file            "Editing src/App.tsx"
+    list_files           "Looking at the files"
+    run_command          "Running: npm install zustand"
+    get_dev_server_logs  "Checking the dev server"
+    generate_image       "Making a picture: <input.name>"   (input.kind: photo | lifestyle | logo | illustration)
+    apply_migration      "Updating the database: <input.name>"
+    deploy_edge_function "Deploying <input.name>"
+    set_secret           "Storing a secret: <input.key>"   (the value is never in the stream)
+    ask_user             plan mode: render input.questions as cards (see section 4)
+    write_spec           plan mode: input.markdown is the spec
+
+Data parts (custom events):
+  {"type":"data-brief","data":{"markdown":"..."}}                 plan mode, first message: the expanded brief; show as a card the user can read
+  {"type":"data-spec","data":{"markdown":"..."}}                  plan mode: the spec was written; offer "Edit spec" and "Build"
+  {"type":"data-notice","data":{"text":"Retrying with a different model.","reason":"step_limit"|"typecheck_strikes"|"stream_retry","attempt"?:n}}
+  {"type":"data-review","data":{"kind":"completeness","round":1}}   first builds: "Checking the app against the spec"
+  {"type":"data-critique","data":{"round":1,"broken":false,"screenshots":[{"name":"desktop","width":1280,"url":"..."},{"name":"mobile","width":390,"url":"..."}]}}
+        "Looking at the page on desktop and phone"; the URLs are time-limited (7 days) and safe to show as thumbnails. broken=true means the page crashed and the model is fixing it first.
+  {"type":"data-usage","data":{"model":"...","steps":12,"tokens_in":..,"tokens_out":..,"reason":"answered"|"step_limit"|"typecheck_strikes"|"cancelled"|"error","mode"?:"plan"}}
+  {"type":"data-snapshot","data":{"id":"...","seq":3}}            after finish: a new version exists; refresh the versions list
+
+Control:
+  {"type":"start","messageId":"msg_..."}   first part
+  {"type":"finish"}                        last part before [DONE]
+  {"type":"error","errorText":"..."}       the turn failed; the stream still ends with finish and [DONE]
+  {"type":"abort","reason":"cancelled by the user"}
+
+The assistant message is stored before `[DONE]` is sent, so fetching
+messages right after the stream ends is safe.
+
+### What to show during a build turn
+
+- The preview iframe (section 6) updates live as files are written; keep it
+  visible. Hot reload does the refreshing.
+- An activity list from tool parts, newest at the bottom, collapsed by
+  default for non-technical users, expanded for developers.
+- The model's text parts as the assistant's chat bubbles.
+- A progress line from start-step counts: "Step 12 of 40", then "Checking
+  against the spec" on data-review, then "Looking at the page" on
+  data-critique, then done on finish.
+- data-notice as a small inline note, not a modal.
+
+------------------------------------------------------------------------
+## 4. Plan mode
+
+The first message of a new project produces, in one stream:
+1. text parts: the brief, streamed as markdown (also in data-brief)
+2. a tool-ask_user part with the questions
+3. finish
+
+Questions shape (tool-input-available, toolName "ask_user"):
+```json
+{"questions":[{"id":"audience","question":"Who is it for?","options":["Customers","Staff","Both"],"allow_free_text":true}]}
+```
+Render each as a card with tappable options and a free-text box when
+allow_free_text. The user's choices are sent as the NEXT chat message in
+plain text; one good format the model handles well:
+  "Who is it for? -> Customers\nDo people sign in? -> Yes, with email"
+There may be a second round of questions (at most two); then a write_spec
+tool part arrives with the markdown spec and a data-spec part. The project
+now has spec_md. Offer:
+  - "Edit the spec": PATCH /builder/projects/{id} {spec_md}
+  - "Build": POST /builder/projects/{id}/build -> Project (mode "build")
+The user can also keep chatting in plan mode to change the spec.
+
+Also in plan mode: uploads (section 7) are listed to the model and image
+uploads are shown to it as pictures, so a user who uploads a logo and
+product photos before answering gets a spec that names them.
+
+------------------------------------------------------------------------
+## 5. Messages (thread hydration)
+
+GET /builder/projects/{id}/messages -> Message[]
+Message: {id, role: "user"|"assistant", parts: Part[], model: string|null, created_at}
+
+`parts` is the folded form of the stream: text deltas are one
+{"type":"text","text"} part; a tool call is one
+{"type":"tool-<name>","toolCallId","state":"output-available"|"output-error","input","output"|"errorText"};
+step-start and data-* parts are kept in order; errors and aborts become
+{"type":"data-error"|"data-abort","data":{...}}. A user message is
+[{"type":"text","text"}, {"type":"file","mediaType":"image/*","url"}...].
+This is the same shape `useChat` holds after a live stream, so reload the
+thread from here into the same renderer.
+
+------------------------------------------------------------------------
+## 6. Preview and files
+
+GET /builder/projects/{id}/preview -> {url, sandbox_id, driver}
+Put `url` in an iframe. The first call after idle starts a sandbox (5 to 10
+seconds, up to 60 with a snapshot restore); show "Starting your workspace".
+Call it again on a 503 sandbox_unavailable. Each call also keeps the sandbox
+alive; sandboxes die after 10 idle minutes and come back from the latest
+snapshot, so a stale iframe should be reloaded from a fresh preview call.
+
+GET /builder/projects/{id}/files              -> {files: string[]}
+GET /builder/projects/{id}/files/{path}       -> {path, content}
+For a read-only code viewer (developers). Paths are project-relative.
+
+------------------------------------------------------------------------
+## 7. Uploads (logo, product photos, fonts)
+
+POST   /builder/projects/{id}/assets   multipart field `file`   -> Asset (201)
+GET    /builder/projects/{id}/assets                            -> Asset[]
+DELETE /builder/projects/{id}/assets/{asset_id}                 -> 204
+Asset: {id, name, mime, size_bytes, path: "/uploads/<name>", url: <time-limited>, meta: {width,height}|null, created_at}
+
+Types: PNG, JPEG, WebP, GIF, SVG, AVIF, WOFF/WOFF2/TTF/OTF, PDF, MP4, MP3;
+8 MB per file, 48 MB per project. Names are made URL-safe; re-uploading a
+name replaces it. The app serves the file at `path`. Generated images the
+model makes also appear here (that is how a client shows "pictures in this
+project"). Show an upload control next to the chat; in plan mode the model
+asks about pictures and the user uploads before answering.
+
+------------------------------------------------------------------------
+## 8. Versions
+
+GET  /builder/projects/{id}/snapshots                 -> Snapshot[]  {id, seq, commit_sha, summary, size_bytes, created_at}
+POST /builder/projects/{id}/snapshots                 -> Snapshot    (take one now; rarely needed)
+POST /builder/projects/{id}/snapshots/{seq}/restore   -> Snapshot    (409 busy if a turn runs)
+
+Every changing turn adds a version (data-snapshot on the stream). Restore
+makes an older version current: a live sandbox gets the files at once, so
+reload the preview iframe after it; the next turn's version continues the
+sequence, nothing is lost. `summary` is the assistant's text for that turn,
+good as the version label.
+
+------------------------------------------------------------------------
+## 9. Connectors: Supabase (data and auth) and Paystack (payments)
+
+Connectors belong to the user, not the project; one connection serves all
+their projects.
+
+GET  /connectors                        -> [{id, provider, name, mode, projects?: [{ref, name, region, status}], created_at}]
+POST /connectors {provider, token, public_key?}   -> connector (201) or 422 with a message to show
+DELETE /connectors/{id}
+
+Supabase, two ways:
+  a) Button: GET /connectors/supabase/authorize -> {url}; open it (window.location or a popup).
+     The backend's callback stores the connection and shows a "connected" page
+     (or redirects to SUPABASE_OAUTH_RETURN_URL?connected=supabase if configured).
+     503 not_configured means the OAuth app is not set up; fall back to (b).
+  b) Paste: POST /connectors {provider:"supabase", token:"sbp_..."} (a personal access token).
+Then per project:
+  POST   /builder/projects/{id}/supabase {project_ref}            -> Project (backend_mode "byo")
+         pick project_ref from the connector's `projects` list
+  POST   /builder/projects/{id}/supabase {project_ref, url?, anon_key}   keys pasted, no connector (app env only, no tools)
+  DELETE /builder/projects/{id}/supabase
+From then on the model has migration, edge-function and secret tools, and the
+app has VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.
+
+Paystack:
+  POST /connectors {provider:"paystack", token:"sk_test_...", public_key:"pk_test_..."}
+       both keys test or both live; the secret is verified and stored encrypted
+  POST   /builder/projects/{id}/payments   -> Project (payments_provider "paystack")
+  DELETE /builder/projects/{id}/payments
+With a Supabase backend the model builds a verified checkout (orders table,
+inline checkout, signed webhook). Tell the user, from the model's final
+message, to add the webhook URL in their Paystack dashboard. Without a
+backend the checkout is inline-only.
+
+------------------------------------------------------------------------
+## 10. Publish
+
+POST /builder/projects/{id}/publish                -> Publish (202) {id, snapshot_id, url, status: "pending", error, created_at, updated_at}
+GET  /builder/projects/{id}/publishes              -> Publish[] newest first
+GET  /builder/projects/{id}/publishes/{publish_id} -> Publish
+
+Poll the row every 3 to 5 seconds until status is "live" (url set; the
+project's published_url updates too) or "failed" (error holds the build
+log tail; show it, offer "Ask Vivid to fix it", which is just a chat turn
+with that text). 409 busy while a turn or another publish runs. URLs look
+like https://<name>-<id6>.vivid-apps.pages.dev until a custom domain exists.
+
+------------------------------------------------------------------------
+## 11. Usage
+
+GET /builder/projects/{id}/usage -> {since, model_calls, tokens, sandbox_seconds, storage_bytes, cost_usd, by_kind}
+Per-project totals for a usage panel. Per-user monthly rollups and plan
+limits arrive with phase 6.
+
+------------------------------------------------------------------------
+## 12. Recommended screens
+
+Non-technical flow: one input ("What do you want to build?"), the brief
+card, question cards, "Edit spec / Build", then a two-pane view: chat left,
+preview iframe right with a phone/desktop toggle (the iframe is the app; set
+width 390 for phone), a small "Versions" list, an "Upload files" button, a
+"Publish" button with the live link, and "Connect Supabase" / "Connect
+Paystack" in project settings. Show tool activity collapsed.
+
+Developer flow adds: skip plan on create, the file viewer, the spec as an
+editable text area, the raw activity log, the usage panel.
+
+Never show: vendor names from errors (the backend scrubs them), secret
+values (never sent), the sandbox id.
