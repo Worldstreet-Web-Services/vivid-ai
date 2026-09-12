@@ -128,8 +128,10 @@ class TurnRunner:
                  user_text: str, spec_md: str | None = None,
                  recent_files: list[str] | None = None,
                  cancelled: Callable[[], bool] = lambda: False,
-                 message_id: str | None = None) -> None:
+                 message_id: str | None = None,
+                 backend: tools.Backend | None = None) -> None:
         self.sandbox = sandbox
+        self.backend = backend
         self.stage = stage
         self.history = history
         self.user_text = user_text
@@ -183,7 +185,9 @@ class TurnRunner:
         """One model's try at the turn. Sets self.result.reason on exit."""
         self.result.model = endpoint.model
         block = await context.build(self.sandbox, self.recent_files)
-        messages = [{"role": "system", "content": prompt.system_prompt(self.spec_md, block)}]
+        messages = [{"role": "system",
+                     "content": prompt.system_prompt(self.spec_md, block,
+                                                     backend=self.backend is not None)}]
         messages += self.history
         messages.append({"role": "user", "content": self.user_text})
 
@@ -196,7 +200,7 @@ class TurnRunner:
             self.result.steps += 1
             yield stream.start_step()
 
-            call_step = ModelStep(messages, tools.SCHEMAS, endpoint)
+            call_step = ModelStep(messages, tools.schemas_for(self.backend), endpoint)
             async for part in call_step.run():
                 yield part
             if call_step.failed is not None:
@@ -229,7 +233,8 @@ class TurnRunner:
                     content = f"error: {call['error']}. Call the tool again with valid JSON."
                     yield stream.tool_error(call["id"], content)
                 else:
-                    outcome = await tools.execute(call["name"], call["arguments"], self.sandbox)
+                    outcome = await tools.execute(call["name"], call["arguments"],
+                                                  self.sandbox, self.backend)
                     content = outcome.text
                     if outcome.touched and outcome.touched not in self.result.touched:
                         self.result.touched.append(outcome.touched)

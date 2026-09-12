@@ -355,6 +355,24 @@ class Settings(BaseSettings):
     # Empty disables everything that stores a secret.
     SECRETS_ENCRYPTION_KEY: str = ""
 
+    # --- Supabase (the builder's data and auth backend) ------------------
+    # Users connect their own account (phase 4). The OAuth app is registered
+    # once under our Supabase organisation at dashboard/org/_/apps; empty
+    # client id disables the OAuth button, and a pasted personal access
+    # token still works through POST /v1/connectors.
+    SUPABASE_OAUTH_CLIENT_ID: str = ""
+    SUPABASE_OAUTH_CLIENT_SECRET: str = ""
+    # Must match the app registration exactly. Empty = PUBLIC_BASE_URL +
+    # /v1/connectors/supabase/callback.
+    SUPABASE_OAUTH_REDIRECT_URI: str = ""
+    # Where the browser goes after the callback stored the connection.
+    # Empty = a plain "connected, close this window" page.
+    SUPABASE_OAUTH_RETURN_URL: str = ""
+    SUPABASE_API_BASE: str = "https://api.supabase.com"
+    SUPABASE_API_TIMEOUT: int = 60
+    # This backend's public origin, for OAuth redirect URIs.
+    PUBLIC_BASE_URL: str = "http://localhost:8000"
+
     # Limits
     RATE_LIMIT_PER_MINUTE: int = 20
     DEFAULT_CLIENT_ID: str = "vivid_web"

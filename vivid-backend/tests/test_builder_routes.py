@@ -405,3 +405,120 @@ def test_skip_plan_starts_in_build_mode(client, monkeypatch, fake_manager):
     assert client.get(f"/v1/builder/projects/{pid}").json()["mode"] == "build"
     client.post(f"/v1/builder/projects/{pid}/chat", json={"text": "go"})
     assert not fake_manager.fresh and "spec.md" not in fake_manager.sandbox.files
+
+
+def test_supabase_link_env_and_tools(client, maker, monkeypatch, fake_manager):
+    """Link with a connector: keys come from the Management API, the build
+    turn writes .env and offers the backend tools; unlink removes both."""
+    import asyncio
+    from cryptography.fernet import Fernet
+    from app.builder import supabase as sb_mod
+    from app.db.models import Connector
+    from app.services.connectors import tokens
+    from tests.test_builder_supabase import StubAPI
+
+    monkeypatch.setattr(settings, "SECRETS_ENCRYPTION_KEY", Fernet.generate_key().decode())
+    monkeypatch.setattr(sb_mod, "Management", StubAPI)
+    StubAPI.calls = []
+
+    async def add_connector():
+        async with maker() as db:
+            db.add(Connector(user_id="u1", provider="supabase", name="supabase (Acme)",
+                             token=tokens.store("sbp_tok"), config_json={"mode": "authenticated"}))
+            await db.commit()
+    asyncio.run(add_connector())
+
+    seen = []
+
+    async def stream_chat(messages, tools, max_tokens=None, endpoint=None, temperature=None):
+        seen.append(([t["function"]["name"] for t in tools], messages[0]["content"]))
+        yield {"type": "token", "text": "ok"}
+        yield {"type": "done", "finish_reason": "stop", "usage": None}
+    monkeypatch.setattr(code_llm, "stream_chat", stream_chat)
+
+    pid = client.post("/v1/builder/projects", json={"skip_plan": True}).json()["id"]
+    r = client.post(f"/v1/builder/projects/{pid}/supabase", json={"project_ref": "nopenope"})
+    assert r.status_code == 404
+    r = client.post(f"/v1/builder/projects/{pid}/supabase", json={"project_ref": "refone"})
+    assert r.status_code == 200
+    assert r.json()["backend_mode"] == "byo" and r.json()["supabase_project_ref"] == "refone"
+    assert ("keys", "refone") in StubAPI.calls
+
+    client.post(f"/v1/builder/projects/{pid}/chat", json={"text": "build"})
+    assert fake_manager.sandbox.files[".env"] == (
+        "VITE_SUPABASE_URL=https://refone.supabase.co\nVITE_SUPABASE_ANON_KEY=sb_publishable_x\n")
+    assert "apply_migration" in seen[-1][0] and "Backend: Supabase" in seen[-1][1]
+
+    r = client.delete(f"/v1/builder/projects/{pid}/supabase")
+    assert r.json()["backend_mode"] == "none" and r.json()["supabase_project_ref"] is None
+    client.post(f"/v1/builder/projects/{pid}/chat", json={"text": "again"})
+    assert "apply_migration" not in seen[-1][0]
+
+
+def test_supabase_manual_link_gives_env_but_no_tools(client, monkeypatch, fake_manager):
+    from cryptography.fernet import Fernet
+    monkeypatch.setattr(settings, "SECRETS_ENCRYPTION_KEY", Fernet.generate_key().decode())
+    seen = []
+
+    async def stream_chat(messages, tools, max_tokens=None, endpoint=None, temperature=None):
+        seen.append([t["function"]["name"] for t in tools])
+        yield {"type": "token", "text": "ok"}
+        yield {"type": "done", "finish_reason": "stop", "usage": None}
+    monkeypatch.setattr(code_llm, "stream_chat", stream_chat)
+
+    pid = client.post("/v1/builder/projects", json={"skip_plan": True}).json()["id"]
+    r = client.post(f"/v1/builder/projects/{pid}/supabase", json={"project_ref": "abcdef"})
+    assert r.status_code == 400                          # no connector, no keys
+    r = client.post(f"/v1/builder/projects/{pid}/supabase",
+                    json={"project_ref": "abcdef", "anon_key": "sb_publishable_q"})
+    assert r.status_code == 200 and r.json()["backend_mode"] == "byo"
+    client.post(f"/v1/builder/projects/{pid}/chat", json={"text": "build"})
+    assert fake_manager.sandbox.files[".env"].startswith("VITE_SUPABASE_URL=https://abcdef.supabase.co\n")
+    assert "apply_migration" not in seen[-1]
+
+
+def test_supabase_oauth_routes(client, maker, monkeypatch):
+    """authorize hands back a URL and parks state in redis; the callback
+    exchanges the code, verifies, and stores the connector for that user."""
+    import asyncio
+    from cryptography.fernet import Fernet
+    from app.api.routes import connectors as connectors_routes
+    from app.api.routes.connectors import router as connectors_router
+    from app.builder import supabase as sb_mod
+    from app.db.models import Connector
+    from app.services.connectors import tokens
+    from tests.test_builder_supabase import StubAPI
+
+    monkeypatch.setattr(settings, "SECRETS_ENCRYPTION_KEY", Fernet.generate_key().decode())
+    monkeypatch.setattr(sb_mod, "Management", StubAPI)
+    client.app.include_router(connectors_router, prefix="/v1")
+
+    r = client.get("/v1/connectors/supabase/authorize")
+    assert r.status_code == 503                          # no OAuth app registered
+
+    monkeypatch.setattr(settings, "SUPABASE_OAUTH_CLIENT_ID", "cid")
+    monkeypatch.setattr(settings, "SUPABASE_OAUTH_CLIENT_SECRET", "sec")
+    r = client.get("/v1/connectors/supabase/authorize")
+    assert r.status_code == 200 and "oauth/authorize" in r.json()["url"]
+    state = [k for k in client.app.state.redis.strings if k.startswith("oauth:supabase:")][0]
+    state_value = state.split(":", 2)[2]
+
+    async def exchange_code(code, verifier):
+        assert code == "the-code" and verifier
+        return {"access_token": "oauth-token", "refresh_token": "rt", "expires_in": 3600}
+    monkeypatch.setattr(sb_mod, "exchange_code", exchange_code)
+
+    r = client.get("/v1/connectors/supabase/callback", params={"code": "the-code", "state": "wrong"})
+    assert r.status_code == 400
+    r = client.get("/v1/connectors/supabase/callback", params={"code": "the-code", "state": state_value})
+    assert r.status_code == 200 and "connected" in r.text
+
+    async def row():
+        async with maker() as db:
+            from sqlalchemy import select
+            return (await db.execute(select(Connector).where(Connector.provider == "supabase"))).scalar_one()
+    c = asyncio.run(row())
+    assert c.user_id == "u1" and tokens.read(c.token) == "oauth-token"
+    assert c.config_json["via"] == "oauth" and tokens.read(c.config_json["refresh_token"]) == "rt"
+    assert c.config_json["projects"][0]["ref"] == "refone"
+    assert client.get("/v1/connectors").json()[0]["projects"][0]["ref"] == "refone"

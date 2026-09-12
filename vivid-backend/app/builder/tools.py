@@ -11,6 +11,7 @@ import re
 from dataclasses import dataclass
 
 from app.builder.sandbox.base import PathError, Sandbox, SandboxError, safe_path
+from app.builder.supabase import Management, SupabaseError
 from app.core.config import settings
 
 
@@ -65,7 +66,57 @@ SCHEMAS: list[dict] = [
         []),
 ]
 
+#: Offered only when the project has a Supabase backend linked (the user's
+#: own, or Vivid Cloud). They act through the Management API with the
+#: backend's token; the model never sees a key.
+SUPABASE_SCHEMAS: list[dict] = [
+    _fn("apply_migration",
+        "Run SQL against the project's Postgres database and record it as a "
+        "migration. Use it for tables, columns, indexes, policies and functions. "
+        "Every table needs row level security enabled and policies. One "
+        "migration per change, with a short snake_case name.",
+        {"name": {"type": "string", "description": "e.g. create_bookings"},
+         "sql": {"type": "string", "description": "The SQL to run."}},
+        ["name", "sql"]),
+    _fn("deploy_edge_function",
+        "Deploy a Supabase Edge Function (Deno, TypeScript) under the given "
+        "name; the code is index.ts and must export a Deno.serve handler. "
+        "Reads secrets with Deno.env.get. Returns the function's URL.",
+        {"name": {"type": "string", "description": "URL slug, e.g. send-receipt"},
+         "code": {"type": "string", "description": "Full contents of index.ts."},
+         "verify_jwt": {"type": "boolean",
+                        "description": "Require a signed-in user (default true)."}},
+        ["name", "code"]),
+    _fn("set_secret",
+        "Store a secret for edge functions (an API key for a third party). "
+        "Never put the value in code; the function reads it with Deno.env.get.",
+        {"key": {"type": "string", "description": "UPPER_SNAKE_CASE name."},
+         "value": {"type": "string"}},
+        ["key", "value"]),
+]
+
 NAMES = {s["function"]["name"] for s in SCHEMAS}
+SUPABASE_NAMES = {s["function"]["name"] for s in SUPABASE_SCHEMAS}
+
+_SLUG = re.compile(r"^[a-z][a-z0-9-]{1,62}$")
+_SECRET_NAME = re.compile(r"^[A-Z][A-Z0-9_]{1,63}$")
+_MIGRATION_NAME = re.compile(r"^[a-z][a-z0-9_]{1,62}$")
+
+
+@dataclass
+class Backend:
+    """The Supabase project a turn may act on: its ref and a live
+    Management API token. Built by the route, never by the model."""
+    ref: str
+    token: str
+
+    @property
+    def api(self) -> Management:
+        return Management(self.token)
+
+
+def schemas_for(backend: "Backend | None") -> list[dict]:
+    return SCHEMAS + (SUPABASE_SCHEMAS if backend is not None else [])
 
 #: Commands the model may not run, whatever it says it is doing. Matched
 #: against the whole command line. Package installs, scripts and checks are
@@ -106,10 +157,21 @@ def truncate(text: str, limit: int | None = None) -> str:
             "Read a smaller range or narrow the command.]")
 
 
-async def execute(name: str, args: dict, sandbox: Sandbox) -> Outcome:
+async def execute(name: str, args: dict, sandbox: Sandbox,
+                  backend: Backend | None = None) -> Outcome:
     """Run one tool. Never raises for a problem the model can act on."""
+    if name in SUPABASE_NAMES:
+        if backend is None:
+            return Outcome(f"error: {name} needs a Supabase backend linked to this project.")
+        try:
+            outcome = await _SUPABASE_HANDLERS[name](args, backend)
+        except SupabaseError as e:
+            outcome = Outcome(f"error: Supabase refused: {e.public}")
+        outcome.text = truncate(outcome.text) or "(no output)"
+        return outcome
     if name not in NAMES:
-        return Outcome(f"error: no tool named {name!r}. Tools: {', '.join(sorted(NAMES))}.")
+        return Outcome(f"error: no tool named {name!r}. Tools: "
+                       f"{', '.join(sorted(NAMES | (SUPABASE_NAMES if backend else set())))}.")
     handler = _HANDLERS[name]
     try:
         outcome = await handler(args, sandbox)
@@ -121,6 +183,51 @@ async def execute(name: str, args: dict, sandbox: Sandbox) -> Outcome:
         outcome = Outcome(f"error: the sandbox failed: {e}")
     outcome.text = truncate(outcome.text) or "(no output)"
     return outcome
+
+
+# ---------------------------------------------------- supabase handlers
+async def _apply_migration(args: dict, backend: Backend) -> Outcome:
+    name = str(args.get("name") or "").strip()
+    sql = str(args.get("sql") or "").strip()
+    if not sql:
+        return Outcome("error: sql is required")
+    if not _MIGRATION_NAME.match(name):
+        return Outcome("error: name must be short snake_case, e.g. create_bookings")
+    await backend.api.apply_migration(backend.ref, sql, name)
+    return Outcome(f"Migration {name} applied.")
+
+
+async def _deploy_edge_function(args: dict, backend: Backend) -> Outcome:
+    slug = str(args.get("name") or "").strip()
+    code = args.get("code")
+    if not _SLUG.match(slug):
+        return Outcome("error: name must be a lowercase slug like send-receipt")
+    if not isinstance(code, str) or "serve" not in code:
+        return Outcome("error: code must be the full index.ts with a Deno.serve handler")
+    out = await backend.api.deploy_function(backend.ref, slug, code,
+                                            verify_jwt=bool(args.get("verify_jwt", True)))
+    return Outcome(f"Deployed {slug} (version {out.get('version', '?')}). "
+                   f"URL: {out['url']}\nCall it from the app with "
+                   f"supabase.functions.invoke('{slug}', {{ body }}).")
+
+
+async def _set_secret(args: dict, backend: Backend) -> Outcome:
+    key = str(args.get("key") or "").strip()
+    value = args.get("value")
+    if not _SECRET_NAME.match(key):
+        return Outcome("error: key must be UPPER_SNAKE_CASE")
+    if not isinstance(value, str) or not value:
+        return Outcome("error: value is required")
+    await backend.api.set_secrets(backend.ref, {key: value})
+    # The value is never echoed: not to the model, not to the thread.
+    return Outcome(f"Secret {key} set for edge functions.")
+
+
+_SUPABASE_HANDLERS = {
+    "apply_migration": _apply_migration,
+    "deploy_edge_function": _deploy_edge_function,
+    "set_secret": _set_secret,
+}
 
 
 # ------------------------------------------------------------- handlers

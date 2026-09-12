@@ -106,6 +106,37 @@ Plan-mode parts, in order: `start`, `start-step`, optional text,
 `finish-step`, then for a written spec `data-spec`, then `data-usage` with
 `"mode": "plan"`, `finish`, `[DONE]`. Plan turns never produce a snapshot.
 
+## Supabase (the app's data and auth)
+
+A user connects their own Supabase account once, as a connector, and any of
+their builder projects can use it:
+
+```
+GET    /v1/connectors/supabase/authorize   -> {url}: send the browser there (OAuth app needed)
+GET    /v1/connectors/supabase/callback    Supabase returns here; stores the connector
+POST   /v1/connectors {provider: "supabase", token: "sbp_..."}   a pasted personal access token
+GET    /v1/connectors                       each connector; Supabase rows list `projects`
+POST   /v1/builder/projects/{id}/supabase  {project_ref} -> project (backend_mode: byo)
+                                            or {project_ref, url?, anon_key} with no connector
+DELETE /v1/builder/projects/{id}/supabase  unlink
+```
+
+Linking reads the project's URL and publishable key through the Management
+API and keeps them encrypted per project. On every build turn the sandbox's
+`.env` is written with `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`; the
+template's `src/lib/supabase.ts` reads them. `.env` is git-ignored, so it is
+never in a snapshot. With a connector the model also gets three tools:
+`apply_migration(name, sql)` (recorded in the project's migration history),
+`deploy_edge_function(name, code, verify_jwt?)` and `set_secret(key, value)`,
+all through the Management API with the user's token. A link made by
+pasting keys gives the app its env but no tools. The system prompt tells the
+model to use Supabase auth for login, enable row level security on every
+table, and keep the service key inside edge functions.
+
+OAuth tokens expire; the refresh token is stored with the connector and
+renewed before use. Connector tokens (GitHub too) are encrypted at rest with
+`SECRETS_ENCRYPTION_KEY`; rows written before that stay readable.
+
 ## Versions
 
 Every turn that changes a file ends with a snapshot: a git commit in the
@@ -140,7 +171,11 @@ E2B_API_KEY, E2B_TEMPLATE=vivid-web
 BUILDER_TEMPLATE_DIR path to sandbox-templates/vivid-web (local driver, eval)
 R2_ENDPOINT or R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET, R2_PREFIX
                      snapshot store; empty falls back to the S3_* settings (MinIO in dev)
-SECRETS_ENCRYPTION_KEY  Fernet key for per-project secrets (phase 4 uses it)
+SECRETS_ENCRYPTION_KEY  Fernet key for per-project secrets and connector tokens
+SUPABASE_OAUTH_CLIENT_ID, SUPABASE_OAUTH_CLIENT_SECRET   the Connect button (dashboard/org/_/apps)
+SUPABASE_OAUTH_REDIRECT_URI   default PUBLIC_BASE_URL + /v1/connectors/supabase/callback
+SUPABASE_OAUTH_RETURN_URL     where the browser goes after connecting (default: a plain page)
+PUBLIC_BASE_URL               this backend's public origin
 ```
 
 A turn is capped at `BUILDER_MAX_STEPS` (20) tool calls. A model call whose

@@ -23,6 +23,7 @@ class ProjectOut(BaseModel):
     spec_md: str | None
     current_snapshot_id: str | None
     backend_mode: str
+    supabase_project_ref: str | None
     published_url: str | None
     created_at: datetime
     updated_at: datetime
@@ -82,3 +83,11 @@ class UsageOut(BaseModel):
     storage_bytes: int
     cost_usd: float
     by_kind: dict
+
+
+class SupabaseLinkIn(BaseModel):
+    project_ref: str = Field(min_length=5, max_length=64, pattern=r"^[a-z0-9-]+$")
+    #: Only for a link without a connector: the project's URL and its
+    #: publishable (anon) key, both safe in a browser.
+    url: str | None = Field(default=None, max_length=256)
+    anon_key: str | None = Field(default=None, max_length=512)

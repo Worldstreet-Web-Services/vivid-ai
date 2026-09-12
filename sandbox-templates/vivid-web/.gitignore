@@ -4,3 +4,5 @@ dist
 .vivid-dev.log
 *.local
 .DS_Store
+# Written by the builder when a backend is linked; never in a snapshot.
+.env

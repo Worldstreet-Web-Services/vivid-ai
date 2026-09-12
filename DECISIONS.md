@@ -254,3 +254,25 @@ once ("Stream interrupted"). Both runners now restart a broken model call
 vendor. Worth watching: DeepSeek's first pass on a multi-page spec leaned on
 the fallback; `builder_eval` is the tool for deciding whether BUILD_MODEL
 should change.
+
+## 9. Phase 4 choices (2026-09-12)
+
+- Supabase is a **connector**, like GitHub: one row per user, reused by all
+  their projects. Two ways in: the OAuth button (needs our registered app)
+  and a pasted personal access token. The connector row exposes the
+  account's projects so a client can offer a picker.
+- Connector tokens are now encrypted at rest (Fernet), closing the TODO on
+  the table; legacy plaintext rows still read.
+- Per-project link: `backend_mode = byo` + `supabase_project_ref`, with the
+  project URL and publishable key in `builder_secrets`. A user with only
+  project keys can paste them: the app gets its env, the tools stay off
+  because they need a Management API token.
+- `.env` is git-ignored in the template and rewritten every build turn, so
+  keys never enter a snapshot and a fresh sandbox gets them back.
+- Migrations go through `POST /database/migrations` (recorded in history),
+  not the raw query endpoint. Edge functions use the multipart `deploy`
+  endpoint with `index.ts` as the entrypoint. Secrets use the bulk endpoint;
+  the tool never echoes a value.
+- Still needed from the owner to prove the tool path live: a personal
+  access token (or the OAuth app). The client env path was verified live
+  against the provided project.

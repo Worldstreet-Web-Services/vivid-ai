@@ -19,6 +19,8 @@
     GET    /builder/projects/{id}/snapshots  one per turn that changed files
     POST   /builder/projects/{id}/snapshots/{seq}/restore
     GET    /builder/projects/{id}/usage      this project's metered totals
+    POST   /builder/projects/{id}/supabase   link a Supabase project (byo)
+    DELETE /builder/projects/{id}/supabase   unlink
 
 One turn per project at a time (409 otherwise). The stream is the contract
 for any client: see docs/builder.md.
@@ -32,18 +34,19 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
-from app.builder import planning, routing, snapshots, stream, usage
+from app.builder import planning, routing, secrets, snapshots, stream, supabase, tools, usage
 from app.builder.loop import ModelCall, TurnRunner, turns
 from app.builder.planning import PlanRunner
 from app.builder.sandbox.base import PathError, SandboxError, safe_path
 from app.builder.sandbox.manager import manager
 from app.core.config import settings
 from app.core.errors import APIError
-from app.db.models import BuilderMessage, BuilderProject, BuilderSnapshot, User
+from app.db.models import BuilderMessage, BuilderProject, BuilderSnapshot, Connector, User
+from app.services.connectors import supabase as supabase_connector
 from app.db.session import async_session
 from app.schemas.builder import (CancelOut, ChatIn, FileOut, FilesOut, MessageOut,
                                  PreviewOut, ProjectCreate, ProjectOut, ProjectUpdate,
-                                 SnapshotOut, UsageOut)
+                                 SnapshotOut, SupabaseLinkIn, UsageOut)
 from app.services import rate_limit
 from app.services.models_gateway import provider
 
@@ -187,6 +190,8 @@ async def chat(project_id: str, body: ChatIn, request: Request,
     await db.commit()
 
     spec_md, recent = project.spec_md, _recent(project)
+    backend = None if planning_mode else await _backend_for(project, user, db)
+    env_vars = None if planning_mode else await _env_for(project, db)
 
     async def generate():
         collector = stream.PartsCollector()
@@ -204,13 +209,14 @@ async def chat(project_id: str, body: ChatIn, request: Request,
             try:
                 sandbox = await _start_sandbox(project_id, redis)
                 await _sync_spec(sandbox, spec_md)
+                await _sync_env(sandbox, env_vars)
             except (SandboxError, snapshots.SnapshotError) as e:
                 log.error("sandbox for project %s failed: %s", project_id, e)
                 yield stream.frame(stream.error(
                     "The workspace could not be started. Please try again."))
                 return
             runner = TurnRunner(sandbox, stage, history, body.text, spec_md, recent,
-                                cancelled=cancel.is_set)
+                                cancelled=cancel.is_set, backend=backend)
             async for part in runner.run():
                 collector.add(part)
                 yield stream.frame(part)
@@ -302,6 +308,112 @@ async def _sync_spec(sandbox, spec_md: str | None) -> None:
         current = None
     if current != spec_md:
         await sandbox.write_file("spec.md", spec_md)
+
+
+async def _sync_env(sandbox, env_vars: dict[str, str] | None) -> None:
+    """The app's .env mirrors the linked backend. Not in git (the template
+    ignores it), so it is rewritten on every build turn and never lands in
+    a snapshot."""
+    if not env_vars:
+        return
+    wanted = "".join(f"{k}={v}\n" for k, v in env_vars.items())
+    try:
+        current = await sandbox.read_file(".env")
+    except FileNotFoundError:
+        current = None
+    if current != wanted:
+        await sandbox.write_file(".env", wanted)
+
+
+async def _env_for(project: BuilderProject, db: AsyncSession) -> dict[str, str] | None:
+    if project.backend_mode == "none":
+        return None
+    url = await secrets.get_secret(db, project.id, "SUPABASE_URL")
+    anon = await secrets.get_secret(db, project.id, "SUPABASE_ANON_KEY")
+    if not (url and anon):
+        return None
+    return {"VITE_SUPABASE_URL": url, "VITE_SUPABASE_ANON_KEY": anon}
+
+
+async def _supabase_connector(user_id: str, db: AsyncSession) -> Connector | None:
+    return (await db.execute(
+        select(Connector).where(Connector.user_id == user_id,
+                                Connector.provider == "supabase"))).scalar_one_or_none()
+
+
+async def _backend_for(project: BuilderProject, user: User,
+                       db: AsyncSession) -> tools.Backend | None:
+    """The Management API context for this turn's tools: the user's own
+    connector for a byo project. A project linked with pasted keys but no
+    connector gets the client env only, and no tools."""
+    if project.backend_mode != "byo" or not project.supabase_project_ref:
+        return None
+    connector = await _supabase_connector(user.id, db)
+    if connector is None:
+        return None
+    try:
+        token = await supabase_connector.access_token(db, connector)
+    except supabase.SupabaseError as e:
+        log.warning("supabase token refresh failed for %s: %s", user.id, e.public)
+        return None
+    return tools.Backend(ref=project.supabase_project_ref, token=token)
+
+
+# -------------------------------------------------------------- supabase
+@router.post("/projects/{project_id}/supabase", response_model=ProjectOut)
+async def link_supabase(project_id: str, body: SupabaseLinkIn, request: Request,
+                        user: User = Depends(get_current_user),
+                        db: AsyncSession = Depends(get_db)):
+    """Point this project at a Supabase project of the user's.
+
+    With a Supabase connector, `project_ref` is enough: the keys are read
+    through the Management API and the builder's migration, function and
+    secret tools become available. Without one, `url` and `anon_key` can
+    be pasted: the app gets its client env, the tools stay off.
+    """
+    project = await _owned(project_id, user, db)
+    if not secrets.configured():
+        raise APIError(503, "not_configured", "Secrets storage is not configured.")
+    connector = await _supabase_connector(user.id, db)
+    if connector is not None and not body.anon_key:
+        try:
+            token = await supabase_connector.access_token(db, connector)
+            api = supabase.Management(token)
+            known = {p.ref for p in await api.projects()}
+            if body.project_ref not in known:
+                raise APIError(404, "not_found",
+                               "That Supabase project is not in the connected account.")
+            keys = await api.api_keys(body.project_ref)
+        except supabase.SupabaseError as e:
+            raise APIError(502, "upstream_error", f"Supabase: {e.public}")
+        url, anon = keys["url"], keys["anon"]
+    else:
+        if not body.anon_key:
+            raise APIError(400, "bad_request",
+                           "Connect Supabase first, or pass url and anon_key.")
+        url = body.url or f"https://{body.project_ref}.supabase.co"
+        anon = body.anon_key
+    await secrets.set_secret(db, project_id, "SUPABASE_URL", url)
+    await secrets.set_secret(db, project_id, "SUPABASE_ANON_KEY", anon)
+    project.backend_mode = "byo"
+    project.supabase_project_ref = body.project_ref
+    await db.commit()
+    sandbox = manager.peek(project_id)
+    if sandbox is not None:
+        await _sync_env(sandbox, {"VITE_SUPABASE_URL": url, "VITE_SUPABASE_ANON_KEY": anon})
+    return project
+
+
+@router.delete("/projects/{project_id}/supabase", response_model=ProjectOut)
+async def unlink_supabase(project_id: str, user: User = Depends(get_current_user),
+                          db: AsyncSession = Depends(get_db)):
+    project = await _owned(project_id, user, db)
+    project.backend_mode = "none"
+    project.supabase_project_ref = None
+    await secrets.delete_secret(db, project_id, "SUPABASE_URL")
+    await secrets.delete_secret(db, project_id, "SUPABASE_ANON_KEY")
+    await db.commit()
+    return project
 
 
 @router.post("/projects/{project_id}/build", response_model=ProjectOut)

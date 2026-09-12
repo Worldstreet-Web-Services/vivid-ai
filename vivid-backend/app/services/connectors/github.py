@@ -10,6 +10,7 @@ import base64
 
 from app.services.models_gateway import http
 from app.services.tools import Tool
+from app.services.connectors import tokens as _tokens
 
 API = "https://api.github.com"
 
@@ -48,7 +49,7 @@ async def verify(token: str, config: dict) -> dict:
 
 
 def build_tools(connector) -> dict[str, Tool]:
-    token = connector.token or ""
+    token = _tokens.read(connector.token) or ""
     cfg = connector.config_json or {}
     login = cfg.get("username", "")
 

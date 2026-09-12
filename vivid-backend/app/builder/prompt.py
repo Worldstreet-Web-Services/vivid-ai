@@ -49,8 +49,26 @@ question instead of guessing.
 """
 
 
-def system_prompt(spec_md: str | None, context_block: str) -> str:
+SUPABASE = """## Backend: Supabase (linked to this project)
+- The client is ready: `import { supabase } from "@/lib/supabase"`. It reads \
+VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY from .env, which are already set. \
+Never edit .env and never put a key in code.
+- Schema changes go through apply_migration, one short migration per change. \
+Enable row level security on every table and write policies; without them the \
+anon key can read and write everything.
+- Login and accounts use Supabase auth (supabase.auth.signInWithOtp or password), \
+never a home-made user table for passwords.
+- Server-side work (calling a paid API, sending email, anything needing a secret) \
+goes in an edge function via deploy_edge_function; store its keys with set_secret. \
+The service key is only ever used inside edge functions.
+- Types: define the row types in src/lib/types.ts next to the queries.
+"""
+
+
+def system_prompt(spec_md: str | None, context_block: str, backend: bool = False) -> str:
     parts = [STATIC]
+    if backend:
+        parts.append("\n" + SUPABASE)
     if spec_md and spec_md.strip():
         parts.append("\n## The spec (agreed with the user; build to it)\n" + spec_md.strip())
     parts.append("\n## Project state at the start of this turn\n" + context_block)
