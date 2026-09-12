@@ -1,0 +1,6 @@
+node_modules
+dist
+.vite
+.vivid-dev.log
+*.local
+.DS_Store
