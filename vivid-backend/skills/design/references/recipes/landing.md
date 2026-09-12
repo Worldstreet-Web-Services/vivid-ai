@@ -15,3 +15,7 @@ One page, six to eight sections, each earning its place:
 
 On phones every section stacks, headings shrink one step, the primary action repeats in
 the footer. No carousel; stack the images.
+
+Minimums for a first build: all seven sections present, 6 to 10 items in the menu or
+services grid with prices and an image each, real hours and address from the spec, and the
+WhatsApp and call actions wired to the numbers in the spec.

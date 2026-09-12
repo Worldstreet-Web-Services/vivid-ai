@@ -15,3 +15,7 @@ labels above, help text below, destructive actions in a confirm dialog.
 
 Density: text-sm everywhere, gap-4, rounded-md. Status as badges with the same colour
 meaning across the app.
+
+Minimums for a first build: every list seeded with 12 or more realistic rows, the four
+stat cards computed from that data, create and edit dialogs that work, and search and one
+filter functioning.

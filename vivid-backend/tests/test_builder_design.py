@@ -17,6 +17,9 @@ def env(monkeypatch):
     monkeypatch.setattr(settings, "EDIT_MODEL", "vendor/primary")
     monkeypatch.setattr(settings, "FALLBACK_MODEL", "vendor/fallback")
     monkeypatch.setattr(settings, "BUILDER_MAX_STEPS", 4)
+    monkeypatch.setattr(settings, "BUILDER_BUILD_MAX_STEPS", 4)
+    monkeypatch.setattr(settings, "BUILDER_COMPLETION_ROUNDS", 0)
+    monkeypatch.setattr(settings, "BUILDER_COMPLETION_STEPS", 3)
     monkeypatch.setattr(settings, "BUILDER_CRITIQUE_ROUNDS", 1)
     monkeypatch.setattr(settings, "BUILDER_CRITIQUE_STEPS", 3)
     monkeypatch.setattr(settings, "CODE_STREAM_RETRIES", 1)
@@ -88,7 +91,7 @@ async def test_turn_critiques_after_answering(monkeypatch):
         return [screenshots.Shot("desktop", 1280, b"D", key=None),
                 screenshots.Shot("mobile", 390, b"M", key=None)]
     monkeypatch.setattr(screenshots, "capture", fake_capture)
-    monkeypatch.setattr(settings, "BUILDER_MAX_STEPS", 2)     # the critique needs its own budget
+    monkeypatch.setattr(settings, "BUILDER_BUILD_MAX_STEPS", 2)   # the critique needs its own budget
 
     sb = FakeSandbox({"src/App.tsx": "x"})
     runner = TurnRunner(sb, routing.BUILD, [], "a shop", spec_md="# Spec\nA sneaker shop",
@@ -181,3 +184,41 @@ async def test_generate_image_tool_stores_and_returns_a_path(monkeypatch):
     assert out.text.startswith("error: image generation is not available")
     assert [s["function"]["name"] for s in tools.schemas_for(None, maker)][-1] == "generate_image"
     assert "generate_image" not in [s["function"]["name"] for s in tools.schemas_for(None)]
+
+
+async def test_first_build_gets_a_completeness_review_before_the_critique(monkeypatch):
+    monkeypatch.setattr(settings, "BUILDER_COMPLETION_ROUNDS", 1)
+    monkeypatch.setattr(settings, "BUILDER_BUILD_MAX_STEPS", 2)
+    model = ScriptedModel([
+        ("", [call("write_file", {"path": "src/App.tsx", "content": "thin"})]),
+        ("Done.", []),                                               # answer -> completion review
+        ("Adding the missing pages.", [call("write_file", {"path": "src/pages/Shop.tsx", "content": "x"}, "c2")]),
+        ("Complete now.", []),                                       # answer -> visual critique
+        ("Looks right on both.", []),
+    ])
+    monkeypatch.setattr(code_llm, "stream_chat", model.stream_chat)
+
+    async def fake_capture(sandbox, project_id, label, store=True):
+        return [screenshots.Shot("desktop", 1280, b"D"), screenshots.Shot("mobile", 390, b"M")]
+    monkeypatch.setattr(screenshots, "capture", fake_capture)
+
+    sb = FakeSandbox({"src/App.tsx": "x"})
+    runner = TurnRunner(sb, routing.BUILD, [], "build", spec_md="# Spec\nA shop", project_id="p1")
+    parts, c = await collect(runner)
+    assert runner.result.reason == loop.ANSWERED
+    assert runner.result.completion_rounds == 1 and runner.result.critique_rounds == 1
+    kinds = [p["type"] for p in parts if p["type"].startswith("data-")]
+    assert kinds.index("data-review") < kinds.index("data-critique")
+    review_msg = model.requests[2]["messages"][-1]
+    assert review_msg["role"] == "user" and "review the app against the spec" in review_msg["content"]
+    assert "sixteen" not in review_msg["content"] and "at least eight" in review_msg["content"]
+    assert "src/pages/Shop.tsx" in sb.files
+    # The static prompt now asks for completeness, and edits stay minimal.
+    assert "A first build is not done until the whole spec exists" in model.requests[0]["messages"][0]["content"]
+
+    # Edit turns get no completeness review.
+    model = ScriptedModel([("", [call("write_file", {"path": "src/A.tsx", "content": "z"})]), ("ok", [])])
+    monkeypatch.setattr(code_llm, "stream_chat", model.stream_chat)
+    runner = TurnRunner(FakeSandbox({"src/App.tsx": "x"}), routing.EDIT, [], "tweak", project_id="p1", critique=False)
+    await collect(runner)
+    assert runner.result.completion_rounds == 0 and runner.result.steps == 2

@@ -19,3 +19,7 @@ transfer), order summary; confirmation screen with an order number and a WhatsAp
 
 Data: products (id, name, price, images, sizes, category, stock), cart in localStorage or
 the store; orders when a backend exists. Prices in the spec's currency, formatted.
+
+Minimums for a first build: 8 to 12 products across at least three categories, each with a
+name, price, two-line description, sizes or variants, and an image (uploaded or generated);
+every page above exists and is in the nav; the cart works end to end to the order screen.

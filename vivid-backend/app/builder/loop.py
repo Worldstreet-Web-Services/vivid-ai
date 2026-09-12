@@ -56,6 +56,7 @@ class TurnResult:
     typecheck_failures: int = 0
     retried: bool = False
     critique_rounds: int = 0
+    completion_rounds: int = 0
     #: Stored screenshot keys, newest round last.
     screenshots: list[str] = field(default_factory=list)
 
@@ -69,6 +70,16 @@ class TurnResult:
 
 
 STREAM_RETRY_NOTICE = "The model connection dropped; retrying."
+
+COMPLETION_BRIEF = """Before we show this to the user, review the app against the spec, page by \
+page. Check: every page in the spec's Pages section exists, is routed, and is linked from the \
+nav and footer; any admin or owner area is reachable; each list has at least eight realistic \
+seeded items with names, prices in the spec's currency, short descriptions and an image \
+(generate_image for anything without an upload); each page has every section its recipe \
+lists; forms work end to end (add to cart, book, save); the footer has the real business \
+details. list_files and read what you need, then build everything that is missing or thin \
+now, in this turn. Do not shorten anything. When it is complete, reply to the user in one or \
+two sentences about what the app now contains."""
 #: Seconds before restarting a broken stream, multiplied by the attempt.
 _RETRY_BACKOFF = 1.5
 
@@ -214,7 +225,9 @@ class TurnRunner:
         messages.append({"role": "user", "content": self.user_text})
 
         strikes = 0
-        budget = settings.BUILDER_MAX_STEPS
+        first_build = stage == routing.BUILD
+        budget = settings.BUILDER_BUILD_MAX_STEPS if first_build else settings.BUILDER_MAX_STEPS
+        completion_left = settings.BUILDER_COMPLETION_ROUNDS if first_build else 0
         critique_left = settings.BUILDER_CRITIQUE_ROUNDS if self.critique else 0
         step = 0
         while True:
@@ -242,6 +255,17 @@ class TurnRunner:
                 messages.append({"role": "assistant", "content": text})
                 yield stream.finish_step()
                 self.result.reason = ANSWERED
+                if completion_left > 0 and self.result.touched:
+                    # Content before looks: is the whole spec there?
+                    completion_left -= 1
+                    self.result.completion_rounds += 1
+                    yield stream.data("review", {"kind": "completeness",
+                                                 "round": self.result.completion_rounds})
+                    messages.append({"role": "user", "content": COMPLETION_BRIEF})
+                    budget = step + settings.BUILDER_COMPLETION_STEPS
+                    if self.keepalive is not None:
+                        await self.keepalive()
+                    continue
                 if critique_left > 0 and self.result.touched:
                     # The page is whole: look at it, then keep going with a
                     # few extra steps for the fixes.
@@ -304,9 +328,10 @@ class TurnRunner:
                 self.result.reason = TYPECHECK_STRIKES
                 return
 
-        # Out of steps. During a critique the page was already answered for,
-        # so the turn still counts as done.
-        if self.result.critique_rounds and self.result.reason == ANSWERED:
+        # Out of steps. During a review or critique the page was already
+        # answered for, so the turn still counts as done.
+        if (self.result.critique_rounds or self.result.completion_rounds) \
+                and self.result.reason == ANSWERED:
             return
         self.result.reason = STEP_LIMIT
 

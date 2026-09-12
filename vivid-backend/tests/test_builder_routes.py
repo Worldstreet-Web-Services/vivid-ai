@@ -116,6 +116,8 @@ def fake_manager(monkeypatch) -> FakeManager:
 def client(maker, monkeypatch, fake_manager):
     monkeypatch.setattr(settings, "OPENROUTER_API_KEY", "test")
     monkeypatch.setattr(settings, "BUILDER_MAX_STEPS", 5)
+    monkeypatch.setattr(settings, "BUILDER_BUILD_MAX_STEPS", 5)
+    monkeypatch.setattr(settings, "BUILDER_COMPLETION_ROUNDS", 0)
     # The route persists the assistant message on its own session.
     monkeypatch.setattr(builder_routes, "async_session", maker)
     # A fresh registry per test so a failed test cannot leave a project busy.

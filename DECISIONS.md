@@ -357,3 +357,14 @@ automatic and invisible to users:
   off) and B (on), publishes both, and a different vendor's model scores
   the screenshots blind. The rule: a skill change that does not move the
   score does not ship.
+
+### Thin first builds (2026-09-12)
+
+The sneaker site came out with two products and two real pages. Cause: the
+static prompt told the model to "finish in as few tool calls as you can",
+and a first build shared the 20 step cap of a one-line edit. Changed: the
+prompt now defines a complete first build (all spec pages routed and
+linked, eight or more seeded items with images, every recipe section, admin
+reachable) and keeps edits minimal; first builds get 40 steps; after the
+answer a completeness review compares the app with the spec and fills gaps
+before the visual critique; recipes carry explicit minimums.

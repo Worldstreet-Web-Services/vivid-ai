@@ -56,6 +56,7 @@ Parts, in the order a turn produces them:
 {"type":"data-notice","data":{"text":"The model connection dropped; retrying.","reason":"stream_retry","attempt":1}}
 {"type":"data-notice","data":{"text":"Retrying with a different model.","reason":"step_limit"}}
 {"type":"data-usage","data":{"model":"...","steps":7,"tokens_in":..,"tokens_out":..,"reason":"answered"}}
+{"type":"data-review","data":{"kind":"completeness","round":1}}   first builds: the spec check
 {"type":"data-critique","data":{"round":1,"screenshots":[{"name":"desktop","width":1280,"url":"..."},{"name":"mobile","width":390,"url":"..."}]}}
 {"type":"data-snapshot","data":{"id":"...","seq":3}}   after finish, when the turn changed files
 {"type":"error","errorText":"..."}                   the turn failed; stream still ends normally
@@ -124,6 +125,14 @@ desktop, without the user knowing any of it exists:
   `data-critique` part with the round number and time-limited screenshot
   URLs, so a client can show "checking how it looks". Settings:
   `BUILDER_DESIGN_CRITIQUE`, `BUILDER_CRITIQUE_ROUNDS`, `BUILDER_CRITIQUE_STEPS`.
+- **Complete first builds**: a first build has its own step budget
+  (`BUILDER_BUILD_MAX_STEPS`, 40) and, after the model answers, one
+  completeness review (`data-review` part): the app is compared with the
+  spec page by page (every page routed and in the nav, lists seeded with at
+  least eight realistic items, every recipe section present, admin
+  reachable) and the gaps are built in the same turn, with
+  `BUILDER_COMPLETION_STEPS` extra steps. Then the visual critique runs.
+  Follow-up edits stay minimal by rule.
 - **Generated images**: when the user uploaded nothing, the model has a
   `generate_image(prompt, name, aspect)` tool. The picture is rendered by
   the image model, stored like an upload (R2 and `public/uploads/<name>`),

@@ -19,3 +19,7 @@ day; mark done or no-show. Keep it behind a simple gate if there is no auth.
 
 Data: services (id, name, minutes, price), bookings (id, serviceId, date, time, name, phone,
 status). Slot generation from opening hours in the spec.
+
+Minimums for a first build: 6 to 8 services with real prices and durations, opening hours
+from the spec driving the slots, the full four-step booking flow, My bookings and Admin both
+reachable from the nav, and eight seeded sample bookings so the admin view is not empty.

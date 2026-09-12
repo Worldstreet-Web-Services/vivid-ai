@@ -44,6 +44,8 @@ def models(monkeypatch):
     monkeypatch.setattr(settings, "EDIT_MODEL", "vendor/primary")
     monkeypatch.setattr(settings, "FALLBACK_MODEL", "vendor/fallback")
     monkeypatch.setattr(settings, "BUILDER_MAX_STEPS", 3)
+    monkeypatch.setattr(settings, "BUILDER_BUILD_MAX_STEPS", 3)
+    monkeypatch.setattr(settings, "BUILDER_COMPLETION_ROUNDS", 0)
     monkeypatch.setattr(settings, "BUILDER_TYPECHECK_STRIKES", 2)
     monkeypatch.setattr(settings, "CODE_STREAM_RETRIES", 2)
     monkeypatch.setattr(loop, "_RETRY_BACKOFF", 0)

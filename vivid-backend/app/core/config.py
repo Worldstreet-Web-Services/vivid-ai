@@ -300,6 +300,13 @@ class Settings(BaseSettings):
     BUILDER_TEMPERATURE: float = 0.2
     # Tool calls per turn. The brief's cap; hitting it triggers the fallback.
     BUILDER_MAX_STEPS: int = 20
+    # A first build writes a whole app and gets its own, larger cap.
+    BUILDER_BUILD_MAX_STEPS: int = 40
+    # After a first build answers, one review compares the app with the spec
+    # (pages, nav, seeded data, sections) and fills the gaps, with this many
+    # extra steps. Runs before the visual critique.
+    BUILDER_COMPLETION_ROUNDS: int = 1
+    BUILDER_COMPLETION_STEPS: int = 14
     # Consecutive typecheck failures after write_file/edit_file before the
     # turn is handed to FALLBACK_MODEL.
     BUILDER_TYPECHECK_STRIKES: int = 3
