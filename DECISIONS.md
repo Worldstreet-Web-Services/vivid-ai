@@ -238,3 +238,19 @@ sandbox is killed or found dead, so seconds appear a little after the fact.
   sandbox). It rides along in the next snapshot.
 - Reference images: `images` on the chat body, forwarded as `image_url`
   parts in plan mode only.
+
+### Phase 3 result (2026-09-12, live)
+
+| step | result |
+|---|---|
+| plan turn 1, "a booking app for my salon in Lagos" | first `ask_user` call had broken JSON, was fed back, retried: 6 questions with 3 options each, 16 s |
+| plan turn 2, answers | `write_spec` with all six headings, 9 s; no sandbox created |
+| `PATCH` spec, `POST .../build` | mode build; spec.md written to the sandbox and identical to the edited spec |
+| build turn from the spec | DeepSeek hit 3 typecheck failures in a row; fallback to GLM-5.3-flash finished: 15 steps, 25 tools, 4 pages, 385 s |
+
+Also found on the way: the OpenRouter provider dropped a stream mid-reply
+once ("Stream interrupted"). Both runners now restart a broken model call
+(`CODE_STREAM_RETRIES`) and, if the primary keeps failing, use the fallback
+vendor. Worth watching: DeepSeek's first pass on a multi-page spec leaned on
+the fallback; `builder_eval` is the tool for deciding whether BUILD_MODEL
+should change.
