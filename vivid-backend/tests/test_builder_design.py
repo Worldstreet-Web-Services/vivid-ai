@@ -235,3 +235,32 @@ async def test_first_build_gets_a_completeness_review_before_the_critique(monkey
     runner = TurnRunner(FakeSandbox({"src/App.tsx": "x"}), routing.EDIT, [], "tweak", project_id="p1", critique=False)
     await collect(runner)
     assert runner.result.completion_rounds == 0 and runner.result.steps == 2
+
+
+async def test_capture_reads_the_page_report_and_broken_pages_lead_the_brief(monkeypatch):
+    import json as _json
+    monkeypatch.setattr(screenshots.blob, "put", _noop_put)
+    sb = FakeSandbox({"src/App.tsx": "x"})
+    d = f"/tmp/vivid-shots-{sb.id}"
+    sb.blobs[f"{d}/desktop.jpg"] = b"D"
+    sb.blobs[f"{d}/mobile.jpg"] = b"M"
+    sb.blobs[f"{d}/report.json"] = _json.dumps({
+        "rendered": {"desktop": False, "mobile": True}, "overlay": None,
+        "errors": ["[desktop] Uncaught TypeError: x is not a function"]}).encode()
+    shots = await screenshots.capture(sb, "p1", "m1", store=False)
+    rep = screenshots.last_report
+    assert rep is not None and rep.broken
+    assert "rendered NOTHING at desktop" in rep.summary()
+    msg = screenshots.critique_message(shots, rep)
+    assert msg["content"][0]["text"].startswith("Before any design critique: the page is BROKEN")
+    assert "Uncaught TypeError" in msg["content"][0]["text"]
+
+    sb.blobs[f"{d}/report.json"] = _json.dumps({"rendered": {"desktop": True, "mobile": True},
+                                                "overlay": None, "errors": []}).encode()
+    await screenshots.capture(sb, "p1", "m2", store=False)
+    assert not screenshots.last_report.broken
+    assert screenshots.critique_message(shots, screenshots.last_report)["content"][0]["text"].startswith("Here is your page")
+
+
+async def _noop_put(key, data, content_type="application/gzip"):
+    return None

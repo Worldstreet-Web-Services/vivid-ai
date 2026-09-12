@@ -250,9 +250,10 @@ class TurnRunner:
                         self.result.screenshots += [s.key for s in shots if s.key]
                         yield stream.data("critique", {
                             "round": self.result.critique_rounds,
+                            "broken": bool(screenshots.last_report and screenshots.last_report.broken),
                             "screenshots": [{"name": s.name, "width": s.width, "url": s.url}
                                             for s in shots]})
-                        messages.append(screenshots.critique_message(shots))
+                        messages.append(screenshots.critique_message(shots, screenshots.last_report))
                         budget = step + settings.BUILDER_CRITIQUE_STEPS
                         self.result.reason = ANSWERED
                         if self.keepalive is not None:
@@ -304,9 +305,10 @@ class TurnRunner:
                         self.result.screenshots += [s.key for s in shots if s.key]
                         yield stream.data("critique", {
                             "round": self.result.critique_rounds,
+                            "broken": bool(screenshots.last_report and screenshots.last_report.broken),
                             "screenshots": [{"name": s.name, "width": s.width, "url": s.url}
                                             for s in shots]})
-                        messages.append(screenshots.critique_message(shots))
+                        messages.append(screenshots.critique_message(shots, screenshots.last_report))
                         budget = step + settings.BUILDER_CRITIQUE_STEPS
                         if self.keepalive is not None:
                             await self.keepalive()

@@ -57,7 +57,7 @@ Parts, in the order a turn produces them:
 {"type":"data-notice","data":{"text":"Retrying with a different model.","reason":"step_limit"}}
 {"type":"data-usage","data":{"model":"...","steps":7,"tokens_in":..,"tokens_out":..,"reason":"answered"}}
 {"type":"data-review","data":{"kind":"completeness","round":1}}   first builds: the spec check
-{"type":"data-critique","data":{"round":1,"screenshots":[{"name":"desktop","width":1280,"url":"..."},{"name":"mobile","width":390,"url":"..."}]}}
+{"type":"data-critique","data":{"round":1,"broken":false,"screenshots":[{"name":"desktop","width":1280,"url":"..."},{"name":"mobile","width":390,"url":"..."}]}}   broken: the page crashed or rendered nothing; the model fixes that first
 {"type":"data-snapshot","data":{"id":"...","seq":3}}   after finish, when the turn changed files
 {"type":"error","errorText":"..."}                   the turn failed; stream still ends normally
 {"type":"abort","reason":"cancelled by the user"}
