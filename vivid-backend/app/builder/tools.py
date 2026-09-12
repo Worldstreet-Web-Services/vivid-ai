@@ -1,0 +1,233 @@
+"""The builder's six tools: declared for the model, executed in the sandbox.
+
+Every result is a string the model reads, capped at
+BUILDER_TOOL_RESULT_CHARS. A failure is an "error: ..." observation, never an
+exception, because the model recovers from a described failure and stalls on
+a missing result. `write_file` and `edit_file` run the TypeScript checker
+afterwards and put its first lines in the result, so the model sees the
+breakage next to the edit that caused it.
+"""
+import re
+from dataclasses import dataclass
+
+from app.builder.sandbox.base import PathError, Sandbox, SandboxError, safe_path
+from app.core.config import settings
+
+
+def _fn(name: str, description: str, properties: dict, required: list[str]) -> dict:
+    return {"type": "function",
+            "function": {"name": name, "description": description,
+                         "parameters": {"type": "object", "properties": properties,
+                                        "required": required}}}
+
+
+SCHEMAS: list[dict] = [
+    _fn("read_file",
+        "Read a project file. Returns its exact contents. Read a file before "
+        "editing it: edit_file matches text exactly as read_file returned it. "
+        "Long files: pass start_line and end_line to read a range.",
+        {"path": {"type": "string", "description": "Project-relative path, e.g. src/App.tsx"},
+         "start_line": {"type": "integer", "description": "1-based first line (optional)."},
+         "end_line": {"type": "integer", "description": "1-based last line, inclusive (optional)."}},
+        ["path"]),
+    _fn("write_file",
+        "Create a file or replace it entirely. For a change to part of an "
+        "existing file use edit_file instead. Runs the typecheck afterwards "
+        "and returns any errors.",
+        {"path": {"type": "string", "description": "Project-relative path."},
+         "content": {"type": "string", "description": "The complete file contents."}},
+        ["path", "content"]),
+    _fn("edit_file",
+        "Replace one exact occurrence of old_string with new_string in a file. "
+        "old_string must match the file EXACTLY once, including whitespace; "
+        "include a few surrounding lines to make it unique. Runs the typecheck "
+        "afterwards and returns any errors.",
+        {"path": {"type": "string", "description": "Project-relative path."},
+         "old_string": {"type": "string", "description": "Exact text to replace."},
+         "new_string": {"type": "string", "description": "Replacement text."}},
+        ["path", "old_string", "new_string"]),
+    _fn("list_files",
+        "List every source file in the project (node_modules and build output "
+        "excluded). Optionally only those under a directory.",
+        {"path": {"type": "string", "description": "Directory to list, e.g. src/components (optional)."}},
+        []),
+    _fn("run_command",
+        "Run a shell command in the project root and return its output. Use it "
+        "for `npm install <package>`, one-off scripts, or `npx tsc --noEmit`. "
+        "Commands are killed after 60 seconds; do not start servers with it "
+        "(the dev server is already running).",
+        {"command": {"type": "string", "description": "The command line."}},
+        ["command"]),
+    _fn("get_dev_server_logs",
+        "The last lines of the Vite dev server's output. Read this when the "
+        "preview is blank or shows an error overlay.",
+        {"lines": {"type": "integer", "description": "How many lines, default 100."}},
+        []),
+]
+
+NAMES = {s["function"]["name"] for s in SCHEMAS}
+
+#: Commands the model may not run, whatever it says it is doing. Matched
+#: against the whole command line. Package installs, scripts and checks are
+#: allowed; leaving the project, escalating, or publishing are not.
+BLOCKED = [
+    (re.compile(r"\brm\s+(-[a-z]*\s+)*[\"']?(/|~|\.\.|\*)"), "deleting outside the project"),
+    (re.compile(r"\bsudo\b|\bsu\b\s"), "privilege escalation"),
+    (re.compile(r"\b(curl|wget)\b.*\|\s*(ba)?sh\b"), "piping a download into a shell"),
+    (re.compile(r"\bgit\s+push\b|\bnpm\s+publish\b|\bnpx\s+vercel\b|\bnpx\s+wrangler\b"),
+     "publishing from the sandbox"),
+    (re.compile(r"\bnpm\s+(install|i|add)\b.*\s(-g|--global)\b"), "global installs"),
+    (re.compile(r"\b(shutdown|reboot|halt|poweroff|mkfs|dd)\b"), "system commands"),
+    (re.compile(r"\bkill(all)?\b|\bpkill\b"), "killing processes (the dev server lives here)"),
+    (re.compile(r"\bnpm\s+run\s+dev\b|\bvite\s*$|\bvite\s+--"), "starting a second dev server"),
+    (re.compile(r"(^|[;&|]\s*)cd\s+(/|~|\.\.)"), "leaving the project root"),
+    (re.compile(r"\benv\b\s*$|\bprintenv\b|\$\{?E2B|/proc/"), "reading the environment"),
+]
+
+_TS_ERROR = re.compile(r"error TS\d+")
+
+
+@dataclass
+class Outcome:
+    text: str
+    #: The tool ran the typecheck, and whether it passed. None when the tool
+    #: does not typecheck (reads, listings, commands).
+    typecheck_ok: bool | None = None
+    #: The file this tool changed, if any.
+    touched: str | None = None
+
+
+def truncate(text: str, limit: int | None = None) -> str:
+    limit = limit or settings.BUILDER_TOOL_RESULT_CHARS
+    if len(text) <= limit:
+        return text
+    return (text[:limit] +
+            f"\n[truncated: {len(text) - limit} more characters. "
+            "Read a smaller range or narrow the command.]")
+
+
+async def execute(name: str, args: dict, sandbox: Sandbox) -> Outcome:
+    """Run one tool. Never raises for a problem the model can act on."""
+    if name not in NAMES:
+        return Outcome(f"error: no tool named {name!r}. Tools: {', '.join(sorted(NAMES))}.")
+    handler = _HANDLERS[name]
+    try:
+        outcome = await handler(args, sandbox)
+    except PathError as e:
+        outcome = Outcome(f"error: {e}")
+    except FileNotFoundError as e:
+        outcome = Outcome(f"error: no such file: {e}")
+    except SandboxError as e:
+        outcome = Outcome(f"error: the sandbox failed: {e}")
+    outcome.text = truncate(outcome.text) or "(no output)"
+    return outcome
+
+
+# ------------------------------------------------------------- handlers
+async def _read_file(args: dict, sandbox: Sandbox) -> Outcome:
+    path = safe_path(str(args.get("path", "")))
+    content = await sandbox.read_file(path)
+    start, end = args.get("start_line"), args.get("end_line")
+    if start or end:
+        lines = content.splitlines(keepends=True)
+        first = max(int(start or 1), 1)
+        last = min(int(end or len(lines)), len(lines))
+        content = "".join(lines[first - 1:last])
+        return Outcome(f"[{path} lines {first}-{last} of {len(lines)}]\n{content}")
+    return Outcome(content)
+
+
+async def _write_file(args: dict, sandbox: Sandbox) -> Outcome:
+    path = safe_path(str(args.get("path", "")))
+    content = args.get("content")
+    if not isinstance(content, str):
+        return Outcome("error: content must be a string")
+    await sandbox.write_file(path, content)
+    ok, report = await typecheck(sandbox)
+    return Outcome(f"Wrote {path} ({len(content)} chars).\n{report}",
+                   typecheck_ok=ok, touched=path)
+
+
+async def _edit_file(args: dict, sandbox: Sandbox) -> Outcome:
+    path = safe_path(str(args.get("path", "")))
+    old, new = args.get("old_string"), args.get("new_string")
+    if not isinstance(old, str) or not isinstance(new, str):
+        return Outcome("error: old_string and new_string must be strings")
+    if not old:
+        return Outcome("error: old_string is empty; use write_file to create a file")
+    content = await sandbox.read_file(path)
+    count = content.count(old)
+    if count == 0:
+        return Outcome(f"error: old_string was not found in {path}. Read the file "
+                       "again and copy the text exactly, including indentation.")
+    if count > 1:
+        return Outcome(f"error: old_string matches {count} places in {path}; include "
+                       "more surrounding lines so it matches exactly once.")
+    await sandbox.write_file(path, content.replace(old, new, 1))
+    ok, report = await typecheck(sandbox)
+    return Outcome(f"Edited {path}.\n{report}", typecheck_ok=ok, touched=path)
+
+
+async def _list_files(args: dict, sandbox: Sandbox) -> Outcome:
+    files = await sandbox.list_files()
+    prefix = str(args.get("path") or "").strip().strip("/")
+    if prefix:
+        prefix = safe_path(prefix) + "/"
+        files = [f for f in files if f.startswith(prefix)]
+        if not files:
+            return Outcome(f"(no files under {prefix})")
+    return Outcome("\n".join(files))
+
+
+async def _run_command(args: dict, sandbox: Sandbox) -> Outcome:
+    command = str(args.get("command") or "").strip()
+    if not command:
+        return Outcome("error: command is required")
+    reason = blocked_reason(command)
+    if reason:
+        return Outcome(f"error: that command is not allowed here ({reason}).")
+    result = await sandbox.run(command, timeout=settings.BUILDER_COMMAND_TIMEOUT)
+    head = (f"[timed out after {settings.BUILDER_COMMAND_TIMEOUT}s]" if result.timed_out
+            else f"[exit code {result.exit_code}]")
+    return Outcome(f"{head}\n{result.output}".strip())
+
+
+async def _dev_server_logs(args: dict, sandbox: Sandbox) -> Outcome:
+    lines = int(args.get("lines") or 100)
+    text = await sandbox.dev_server_logs(max(1, min(lines, 500)))
+    return Outcome(text.strip() or "(the dev server has printed nothing yet)")
+
+
+_HANDLERS = {
+    "read_file": _read_file,
+    "write_file": _write_file,
+    "edit_file": _edit_file,
+    "list_files": _list_files,
+    "run_command": _run_command,
+    "get_dev_server_logs": _dev_server_logs,
+}
+
+
+def blocked_reason(command: str) -> str | None:
+    for pattern, reason in BLOCKED:
+        if pattern.search(command):
+            return reason
+    return None
+
+
+async def typecheck(sandbox: Sandbox) -> tuple[bool, str]:
+    """`tsc --noEmit` over the app. Returns (passed, report) where the report
+    is the first BUILDER_TYPECHECK_ERROR_LINES error lines, or one word."""
+    result = await sandbox.run("npx tsc --noEmit -p tsconfig.app.json",
+                               timeout=settings.BUILDER_TYPECHECK_TIMEOUT)
+    if result.timed_out:
+        return False, "Typecheck: timed out."
+    if result.ok:
+        return True, "Typecheck: clean."
+    lines = [ln for ln in result.output.splitlines() if _TS_ERROR.search(ln)]
+    if not lines:
+        lines = result.output.splitlines()
+    limit = settings.BUILDER_TYPECHECK_ERROR_LINES
+    shown = lines[:limit]
+    more = f"\n... {len(lines) - limit} more" if len(lines) > limit else ""
+    return False, "Typecheck: FAILED\n" + "\n".join(shown) + more
