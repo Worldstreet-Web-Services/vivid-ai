@@ -233,3 +233,16 @@ def test_turn_registry():
     assert reg.cancel("p1") and ev.is_set()
     reg.finish("p1")
     assert not reg.running("p1") and not reg.cancel("p1")
+
+
+async def test_keepalive_runs_after_every_step(monkeypatch):
+    install(monkeypatch, [("", [call("list_files", {})]), ("", [call("list_files", {}, "c2")]),
+                          ("done", [])])
+    ticks = []
+
+    async def keepalive():
+        ticks.append(1)
+    runner = TurnRunner(FakeSandbox({"src/App.tsx": "x"}), routing.EDIT, [], "go",
+                        keepalive=keepalive)
+    await collect(runner)
+    assert runner.result.reason == loop.ANSWERED and len(ticks) == 2   # two tool steps

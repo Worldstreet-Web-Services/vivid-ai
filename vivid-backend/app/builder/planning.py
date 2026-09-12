@@ -91,7 +91,9 @@ any (a shop, a portfolio, a restaurant, a brand site): do they have a logo, prod
 photos or brand colours to upload now, or should the first version use placeholders? \
 The user uploads files beside the chat; uploaded files are listed for you under \
 "Files the user uploaded" and appear at /uploads/<name> in the app.
-3. When you know enough (usually after one round of questions), call write_spec. \
+3. When you know enough, call write_spec. One round of questions is normal, two is \
+the most; after the user has answered twice, write the spec with sensible choices for \
+anything still open rather than asking again. \
 If files were uploaded, name them in the spec where they are used (the logo in the \
 header, each product photo on its product).
 

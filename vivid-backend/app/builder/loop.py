@@ -14,7 +14,7 @@ import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
-from typing import AsyncIterator, Callable
+from typing import AsyncIterator, Awaitable, Callable
 
 from app.builder import context, prompt, routing, stream, tools
 from app.builder.sandbox.base import Sandbox
@@ -130,10 +130,15 @@ class TurnRunner:
                  cancelled: Callable[[], bool] = lambda: False,
                  message_id: str | None = None,
                  backend: tools.Backend | None = None,
-                 assets_block: str = "") -> None:
+                 assets_block: str = "",
+                 keepalive: Callable[[], Awaitable[None]] | None = None) -> None:
         self.sandbox = sandbox
         self.backend = backend
         self.assets_block = assets_block
+        #: Awaited after every step. A long turn outlives a sandbox whose
+        #: lifetime is only extended between turns; this extends it as
+        #: the turn goes.
+        self.keepalive = keepalive
         self.stage = stage
         self.history = history
         self.user_text = user_text
@@ -250,6 +255,11 @@ class TurnRunner:
                 messages.append({"role": "tool", "tool_call_id": call["id"],
                                  "name": call["name"], "content": content})
             yield stream.finish_step()
+            if self.keepalive is not None:
+                try:
+                    await self.keepalive()
+                except Exception as e:                       # never fails a turn
+                    log.warning("keepalive failed: %s", e)
 
             if strikes >= settings.BUILDER_TYPECHECK_STRIKES:
                 self.result.reason = TYPECHECK_STRIKES

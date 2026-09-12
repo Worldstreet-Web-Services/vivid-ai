@@ -636,11 +636,16 @@ def test_assets_upload_list_delete_and_prompting(client, monkeypatch, fake_manag
     user = seen[-1][-1]["content"]
     assert user[1]["type"] == "image_url" and user[1]["image_url"]["url"].startswith("https://r2/")
 
-    # Build turn: the list is in the prompt; a sandbox missing the file gets it.
+    # Build turn: the list is in the prompt.
     client.post(f"/v1/builder/projects/{pid}/build")
-    del fake_manager.sandbox.blobs["public/uploads/air-max-90.png"]
     client.post(f"/v1/builder/projects/{pid}/chat", json={"text": "build"})
     assert "## Files the user uploaded" in seen[-1][0]["content"]
+
+    # A fresh sandbox (the old one died) gets the upload back on any route,
+    # not only on a chat turn: preview here.
+    del fake_manager.sandbox.blobs["public/uploads/air-max-90.png"]
+    fake_manager.fresh = True
+    client.get(f"/v1/builder/projects/{pid}/preview")
     assert fake_manager.sandbox.blobs["public/uploads/air-max-90.png"] == png(30, 20)
 
     assert client.delete(f"/v1/builder/projects/{pid}/assets/{asset['id']}").status_code == 204

@@ -9,6 +9,7 @@ truth and the sandbox is disposable.
 SDK: e2b 2.x (`AsyncSandbox`). Signatures checked against the installed
 package, not remembered.
 """
+import asyncio
 import logging
 
 import httpx
@@ -39,15 +40,24 @@ class E2BSandbox(Sandbox):
 
     @classmethod
     async def create(cls, project_id: str) -> "E2BSandbox":
-        try:
-            sb = await AsyncSandbox.create(
-                template=settings.E2B_TEMPLATE,
-                timeout=settings.BUILDER_SANDBOX_TIMEOUT_SECONDS,
-                metadata={"project_id": project_id},
-                **_api())
-        except (SandboxException, httpx.HTTPError) as e:
-            raise SandboxError(f"could not create sandbox: {e}") from e
-        return cls(sb)
+        last: Exception | None = None
+        for attempt in (1, 2):
+            try:
+                sb = await AsyncSandbox.create(
+                    template=settings.E2B_TEMPLATE,
+                    timeout=settings.BUILDER_SANDBOX_TIMEOUT_SECONDS,
+                    metadata={"project_id": project_id},
+                    **_api())
+                return cls(sb)
+            except httpx.HTTPError as e:
+                # A dropped connection to the control plane, not a refusal;
+                # one more try before giving up.
+                last = e
+                log.warning("sandbox create attempt %d failed: %s", attempt, e)
+                await asyncio.sleep(1.0)
+            except SandboxException as e:
+                raise SandboxError(f"could not create sandbox: {e}") from e
+        raise SandboxError(f"could not create sandbox: {last}") from last
 
     @classmethod
     async def connect(cls, sandbox_id: str) -> "E2BSandbox | None":

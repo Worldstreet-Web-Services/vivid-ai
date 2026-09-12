@@ -235,7 +235,8 @@ async def chat(project_id: str, body: ChatIn, request: Request,
                 return
             runner = TurnRunner(sandbox, stage, history, body.text, spec_md, recent,
                                 cancelled=cancel.is_set, backend=backend,
-                                assets_block=assets_block)
+                                assets_block=assets_block,
+                                keepalive=lambda: manager.touch(project_id))
             async for part in runner.run():
                 collector.add(part)
                 yield stream.frame(part)
@@ -639,15 +640,25 @@ async def read_file(project_id: str, path: str, request: Request,
 
 
 async def _start_sandbox(project_id: str, redis):
-    """The project's sandbox, restoring its current snapshot into a fresh
-    one. The restore reads the snapshot row on its own session because the
-    manager may call it long after the request's session was used."""
+    """The project's sandbox. A fresh one is restored from the current
+    snapshot and then given everything that lives outside git or may have
+    changed since: spec.md, the backend .env, the uploaded files. Own
+    session: the manager may call this long after the request's session
+    was used, and from any route."""
     async def restore(sandbox):
         async with async_session() as db:
             project = await db.get(BuilderProject, project_id)
-            row = await snapshots.current(db, project) if project else None
+            if project is None:
+                return
+            row = await snapshots.current(db, project)
+            spec_md = project.spec_md
+            env_vars = await _env_for(project, db)
+            uploaded = await assets.list_for(db, project_id)
         if row is not None:
             await snapshots.restore(sandbox, row)
+        await _sync_spec(sandbox, spec_md)
+        await _sync_env(sandbox, env_vars)
+        await assets.sync(sandbox, uploaded)
     sandbox = await manager.get_or_create(project_id, redis, restore=restore)
     await manager.touch(project_id)
     return sandbox
