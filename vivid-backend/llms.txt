@@ -7,12 +7,56 @@ feat/app-builder. The human-readable design notes are in docs/builder.md and
 DECISIONS.md at the repo root.
 
 Base URL: the backend origin plus /v1 (dev: http://localhost:8000/v1).
-Auth: every request carries `Authorization: Bearer <access token>` (the same
-JWT the Vivid apps use; a `vivid_` API key also works). Errors come as
+Auth: every request carries `Authorization: Bearer <access token>`; see
+section 0 for how to get one. Errors come as
 `{"error": {"code", "message", "request_id"}, "detail": "..."}` with the HTTP
 status. Codes worth branching on: busy (409), rate_limited (429),
 not_configured (503), sandbox_unavailable (503), snapshot_failed (503),
 bad_asset (400), not_found (404).
+
+------------------------------------------------------------------------
+## 0. Authentication (Decane sign-in, then Vivid tokens)
+
+Identity is Decane's: "Continue with Google" and emailed codes are handled
+by Decane Connect, so this backend never sees a password. The client signs
+the user in with Decane, then exchanges Decane's access token for Vivid's
+own token pair, and uses the Vivid access token on every /v1 request.
+
+Step 1, Decane. In the browser use Decane Connect with the public app id
+(NEXT_PUBLIC_DECANE_APP_ID / the app's Decane app id). It returns a Decane
+access token plus the Google profile when Google was used. The Vivid web
+app's existing code for this lives in vivid-frontend/lib/backend/decane.ts;
+the mobile app does the same with the emailed-code flow. Decane has no SDK;
+it is a small HTTP flow.
+
+Step 2, exchange:
+  POST /auth/decane {access_token, name?, email?, picture?}
+  -> {access_token, refresh_token, token_type: "bearer", user: {id, email, name, avatar_url, profile_email, created_at}}
+The profile fields are display-only and optional (the token itself carries
+no email); pass what Decane gave you so the account gets a name.
+
+Step 3, use and refresh:
+  Authorization: Bearer <access_token> on every request.
+  Access tokens last 30 minutes, refresh tokens 30 days.
+  POST /auth/refresh {refresh_token} -> a new pair. On any 401, refresh
+  once and retry the request; if the refresh fails, sign in again.
+  GET /auth/me -> the user; PATCH /auth/me {name} renames.
+
+Store the pair in the client's secure storage (the web app keeps it in
+localStorage under "vivid_tokens"; mobile uses the platform keystore).
+Never store a Decane token beyond the exchange.
+
+Long streams: a build turn can run 25 minutes, longer than an access token
+lives. The token is checked when the request starts, so a stream in flight
+is not cut off by expiry; refresh before the next request.
+
+Developers and scripts: a `vivid_` API key (Settings, Developer in the web
+app, or POST /keys with a session) works in the same header on every
+/v1 route, including the builder. A key is its own account: projects it
+creates belong to the key, not to the person who made it.
+
+Dev only: POST /auth/signup and POST /auth/login with email and password
+exist behind ALLOW_PASSWORD_AUTH=true for tests; they are off in production.
 
 ------------------------------------------------------------------------
 ## 1. The mental model
