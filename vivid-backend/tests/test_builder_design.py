@@ -43,6 +43,18 @@ def test_recipe_routing_and_block():
 def test_skill_can_be_turned_off(monkeypatch):
     monkeypatch.setattr(settings, "BUILDER_DESIGN_SKILL", False)
     assert skills.design_block("shop", "") == ""
+    monkeypatch.setattr(settings, "BUILDER_COPY_SKILL", False)
+    assert skills.copy_block() == "" and skills.ui_block("shop", "") == ""
+
+
+def test_copy_skill_rides_with_the_design_skill():
+    assert skills.available() == ["copy", "design"]
+    block = skills.ui_block("# Spec\nA salon booking app", "")
+    assert "## Design skill" in block and "## Copy skill" in block
+    assert block.index("## Design skill") < block.index("## Copy skill")
+    assert "Recipe: booking" in block
+    copy = skills.copy_block()
+    assert "Never \"Submit\"" in copy and "Em dashes" in copy and "₦12,000" in copy
 
 
 def test_critique_message_carries_both_shots():
@@ -105,6 +117,7 @@ async def test_turn_critiques_after_answering(monkeypatch):
     third = model.requests[2]["messages"]
     assert third[-1]["role"] == "user" and third[-1]["content"][2]["type"] == "image_url"
     assert "Design skill" in third[0]["content"] and "Recipe: shop" in third[0]["content"]
+    assert "Copy skill" in third[0]["content"]
     assert c.text().endswith("Adjusted the hero and the phone layout.")
 
 

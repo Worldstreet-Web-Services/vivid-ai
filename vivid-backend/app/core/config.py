@@ -412,6 +412,7 @@ class Settings(BaseSettings):
     # them. Relative paths resolve from the backend's working directory.
     BUILDER_SKILLS_DIR: str = "skills"
     BUILDER_DESIGN_SKILL: bool = True
+    BUILDER_COPY_SKILL: bool = True
     # After a build or edit turn that changed UI, screenshot the page at
     # desktop and phone widths and let the model critique and fix it.
     BUILDER_DESIGN_CRITIQUE: bool = True

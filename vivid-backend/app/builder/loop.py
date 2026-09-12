@@ -76,8 +76,10 @@ page. Check: every page in the spec's Pages section exists, is routed, and is li
 nav and footer; any admin or owner area is reachable; each list has at least eight realistic \
 seeded items with names, prices in the spec's currency, short descriptions and an image \
 (generate_image for anything without an upload); each page has every section its recipe \
-lists; forms work end to end (add to cart, book, save); the footer has the real business \
-details. list_files and read what you need, then build everything that is missing or thin \
+lists; every image path used in the code exists in public/uploads (list_files it; generate \
+or fix any that do not, a broken image is worse than none); forms work end to end (add to \
+cart, book, save); the footer has the real business details; the copy passes the copy \
+skill's checks. list_files and read what you need, then build everything that is missing or thin \
 now, in this turn. Do not shorten anything. When it is complete, reply to the user in one or \
 two sentences about what the app now contains."""
 #: Seconds before restarting a broken stream, multiplied by the attempt.
@@ -220,7 +222,7 @@ class TurnRunner:
                      "content": prompt.system_prompt(
                          self.spec_md, block, backend=self.backend is not None,
                          assets_block=self.assets_block,
-                         skill_block=skills.design_block(self.spec_md, self.user_text))}]
+                         skill_block=skills.ui_block(self.spec_md, self.user_text))}]
         messages += self.history
         messages.append({"role": "user", "content": self.user_text})
 
@@ -229,10 +231,33 @@ class TurnRunner:
         budget = settings.BUILDER_BUILD_MAX_STEPS if first_build else settings.BUILDER_MAX_STEPS
         completion_left = settings.BUILDER_COMPLETION_ROUNDS if first_build else 0
         critique_left = settings.BUILDER_CRITIQUE_ROUNDS if self.critique else 0
+        review_deadline = None
         step = 0
         while True:
             step += 1
             if step > budget:
+                if (review_deadline is not None and step > review_deadline
+                        and critique_left > 0 and self.result.touched):
+                    # The review spent its steps mid-work. Close it with a
+                    # look at the page: the critique keeps its own budget.
+                    review_deadline = None
+                    critique_left -= 1
+                    shots = await screenshots.capture(
+                        self.sandbox, self.project_id or "project",
+                        f"{self.message_id}-r{self.result.critique_rounds + 1}")
+                    if shots:
+                        self.result.critique_rounds += 1
+                        self.result.screenshots += [s.key for s in shots if s.key]
+                        yield stream.data("critique", {
+                            "round": self.result.critique_rounds,
+                            "screenshots": [{"name": s.name, "width": s.width, "url": s.url}
+                                            for s in shots]})
+                        messages.append(screenshots.critique_message(shots))
+                        budget = step + settings.BUILDER_CRITIQUE_STEPS
+                        self.result.reason = ANSWERED
+                        if self.keepalive is not None:
+                            await self.keepalive()
+                        continue
                 break
             if self.cancelled():
                 yield stream.abort("cancelled by the user")
@@ -263,6 +288,7 @@ class TurnRunner:
                                                  "round": self.result.completion_rounds})
                     messages.append({"role": "user", "content": COMPLETION_BRIEF})
                     budget = step + settings.BUILDER_COMPLETION_STEPS
+                    review_deadline = budget
                     if self.keepalive is not None:
                         await self.keepalive()
                     continue

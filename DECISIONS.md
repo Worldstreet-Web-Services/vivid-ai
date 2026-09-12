@@ -391,3 +391,15 @@ lets the next process reconnect and E2B's timeout reaps the rest), and
 R2 and are synced back on restore. The 13.7 MB snapshot the images made
 was also why the end-of-turn read had timed out. Snapshots are back to
 kilobytes.
+
+### Copy skill (2026-09-12)
+
+The owner: "the UI is lovely, the copy is bad". Added `skills/copy/SKILL.md`,
+a condensed adaptation of the copywriting, copy-editing and stop-slop skills
+in boraoztunc/skills (Apache-2.0 and MIT; NOTICE kept), cut down to what a
+business website needs plus Nigerian context. Attached with the design skill
+to every UI turn; the completeness review now also checks that every image
+path in the code exists (a card showing alt text was seen on the sneaker
+site) and that the copy passes the skill's checks. Other skills in that
+repository worth a later look: better-typography, better-colors,
+page-cro, pricing-page, seo-audit, schema-markup.

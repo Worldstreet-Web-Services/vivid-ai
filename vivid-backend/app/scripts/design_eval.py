@@ -139,7 +139,6 @@ async def run_variant(slug: str, spec: str, variant: str, do_publish: bool) -> d
 
 async def judge(a: dict, b: dict) -> dict:
     """Blind, randomised order. Returns scores keyed back to a and b."""
-    ep = provider.openrouter_model(settings.DESIGN_JUDGE_MODEL, role="judge")
     first, second = random.sample([("a", a), ("b", b)], 2)
     content = [{"type": "text", "text": JUDGE}]
     for label, run in ((f"First", first[1]), ("Second", second[1])):
@@ -147,16 +146,27 @@ async def judge(a: dict, b: dict) -> dict:
             if name in run["shot_data"]:
                 content.append({"type": "text", "text": f"{label}, {name}:"})
                 content.append({"type": "image_url", "image_url": {"url": run["shot_data"][name]}})
-    payload = {"model": ep.model, "messages": [{"role": "user", "content": content}],
-               "max_tokens": 600, "temperature": 0, **ep.extra_payload}
-    try:
-        r = await http.client().post(ep.url(), json=payload, headers=ep.headers, timeout=180)
-        r.raise_for_status()
-        text = r.json()["choices"][0]["message"]["content"]
-        text = text[text.find("{"): text.rfind("}") + 1]
-        verdict = json.loads(text)
-    except (httpx.HTTPError, ValueError, KeyError, IndexError) as e:
-        return {"error": f"judge failed: {e}"}
+    verdict = None
+    errors = []
+    # The configured judge first, then the plan model (also takes images):
+    # a judge that answers with empty content must not sink the comparison.
+    for slug in dict.fromkeys([settings.DESIGN_JUDGE_MODEL, settings.PLAN_MODEL]):
+        ep = provider.openrouter_model(slug, role="judge")
+        payload = {"model": ep.model, "messages": [{"role": "user", "content": content}],
+                   "max_tokens": 800, "temperature": 0, **ep.extra_payload}
+        try:
+            r = await http.client().post(ep.url(), json=payload, headers=ep.headers, timeout=180)
+            r.raise_for_status()
+            message = r.json()["choices"][0]["message"]
+            text = message.get("content") or message.get("reasoning") or ""
+            if "{" not in text:
+                raise ValueError(f"{slug} answered without JSON")
+            verdict = json.loads(text[text.find("{"): text.rfind("}") + 1])
+            break
+        except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError) as e:
+            errors.append(f"{slug}: {e}")
+    if verdict is None:
+        return {"error": "judge failed: " + "; ".join(errors)}
     out = {first[0]: verdict.get("first", {}), second[0]: verdict.get("second", {}),
            "note": verdict.get("note", ""), "order": [first[0], second[0]]}
     for k in ("a", "b"):

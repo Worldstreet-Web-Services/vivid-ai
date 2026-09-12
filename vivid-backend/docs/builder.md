@@ -125,6 +125,12 @@ desktop, without the user knowing any of it exists:
   `data-critique` part with the round number and time-limited screenshot
   URLs, so a client can show "checking how it looks". Settings:
   `BUILDER_DESIGN_CRITIQUE`, `BUILDER_CRITIQUE_ROUNDS`, `BUILDER_CRITIQUE_STEPS`.
+- **The copy skill** (`skills/copy/`): how the words on the page are
+  written: outcome headlines, verb-plus-object buttons, specific claims,
+  formatted prices, a banned list of generated-sounding phrases, Nigerian
+  context. Attached with the design skill to every UI turn.
+  `BUILDER_COPY_SKILL` turns it off. Adapted from boraoztunc/skills and
+  stop-slop; see `skills/copy/NOTICE.md`.
 - **Complete first builds**: a first build has its own step budget
   (`BUILDER_BUILD_MAX_STEPS`, 40) and, after the model answers, one
   completeness review (`data-review` part): the app is compared with the

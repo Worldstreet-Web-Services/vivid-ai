@@ -71,5 +71,6 @@ on a 390px screen, without zooming.
 
 ## Before you finish a page
 Check, in this order: phone width first (does anything overflow or wrap badly?), then
-desktop; heading hierarchy; consistent spacing; every image has an aspect ratio; primary
-action visible without scrolling on the home page; nothing says placeholder or TODO.
+desktop; heading hierarchy; consistent spacing; every image has an aspect ratio and its
+file exists in public/uploads (a card showing alt text is a bug); primary action visible
+without scrolling on the home page; nothing says placeholder or TODO.

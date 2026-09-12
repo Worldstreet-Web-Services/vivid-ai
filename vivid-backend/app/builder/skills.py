@@ -85,6 +85,21 @@ def design_block(spec_md: str | None, user_text: str = "") -> str:
     return "## Design skill\n" + block
 
 
+def copy_block() -> str:
+    """The copy skill for any turn that writes visible text."""
+    if not settings.BUILDER_COPY_SKILL:
+        return ""
+    text = _read("copy/SKILL.md")
+    return "## Copy skill\n" + text if text else ""
+
+
+def ui_block(spec_md: str | None, user_text: str = "") -> str:
+    """Everything a UI turn gets: the design skill with its recipe, then the
+    copy skill. Order matters little to the model; the design skill is
+    first because the recipe names the sections the copy then fills."""
+    return "\n\n".join(b for b in (design_block(spec_md, user_text), copy_block()) if b)
+
+
 def available() -> list[str]:
     root = _root()
     if not root.is_dir():
