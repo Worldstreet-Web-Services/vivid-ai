@@ -32,6 +32,9 @@ app/
                        tts, translate, embeddings, health; provider.py is
                        the MODEL_PROVIDER switch (our pods or OpenRouter)
   workers/     arq jobs: embed_message, generate_chat_title
+  builder/     the app builder (docs/builder.md): the turn loop, its six
+               tools, the sandbox drivers (E2B, local) and manager, the AI SDK
+               UI message stream encoder, model routing by stage
 ```
 
 ## REST (all under /v1)
@@ -46,6 +49,7 @@ POST /keys                 GET  /keys              DELETE /keys/:id
 POST /images/generations   POST /videos            GET  /videos/:id
 POST /audio/speech         POST /audio/transcriptions
 GET  /tools                POST /tools/:name
+GET  /builder/projects     POST /builder/projects/:id/chat   (docs/builder.md)
 GET  /health               GET  /health/models
 ```
 
