@@ -11,6 +11,9 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
+# The builder's skills and the integration guide ship with the code.
+COPY skills ./skills
+COPY llms.txt .
 
 RUN useradd --create-home appuser
 USER appuser

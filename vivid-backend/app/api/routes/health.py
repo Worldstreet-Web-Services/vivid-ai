@@ -13,7 +13,26 @@ router = APIRouter(tags=["health"])
 async def health_check():
     return {"status": "ok", "app": settings.APP_NAME,
             "version": settings.APP_VERSION, "env": settings.ENV,
-            "tools": sorted(tools.available())}
+            "tools": sorted(tools.available()),
+            "builder": _builder_status()}
+
+
+def _builder_status() -> dict:
+    """What the app builder can do on this deployment, as booleans: which
+    integration is configured, never a value. Enough to see from outside
+    that a deploy carried its env and its skills."""
+    from app.builder import blob, images, publish, routing, secrets, skills, supabase
+    return {
+        "models": routing.endpoint_for(routing.BUILD).configured,
+        "sandbox": settings.SANDBOX_DRIVER if (settings.E2B_API_KEY or
+                                               settings.SANDBOX_DRIVER == "local") else None,
+        "storage": "r2" if blob._using_r2() else "s3",
+        "secrets": secrets.configured(),
+        "images": images.available(),
+        "publish": publish.configured(),
+        "supabase_oauth": supabase.oauth_configured(),
+        "skills": skills.available(),
+    }
 
 
 def _operator(request: Request) -> bool:

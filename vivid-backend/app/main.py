@@ -1,12 +1,14 @@
 import asyncio
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import redis.asyncio as aioredis
 from arq import create_pool
 from arq.connections import RedisSettings
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import PlainTextResponse
 
 from app.api.routes import api_router
 from app.builder.sandbox.manager import manager as sandbox_manager
@@ -128,6 +130,18 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=[errors.REQUEST_ID_HEADER],
 )
+
+# The integration guide for people building a client on the builder, served
+# where the llms.txt convention puts it: the origin root.
+_LLMS_TXT = Path(__file__).resolve().parent.parent / "llms.txt"
+
+
+@app.get("/llms.txt", include_in_schema=False)
+async def llms_txt():
+    if not _LLMS_TXT.is_file():
+        return PlainTextResponse("llms.txt is not shipped in this build.", status_code=404)
+    return PlainTextResponse(_LLMS_TXT.read_text(encoding="utf-8"))
+
 
 # REST is versioned from day one (spec section 6) so partner APIs can be added
 # under the same scheme.
