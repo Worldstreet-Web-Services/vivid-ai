@@ -96,12 +96,19 @@ class E2BSandbox(Sandbox):
         return path if path.startswith("/") else self._abs(path)
 
     async def read_bytes(self, path: str) -> bytes:
-        try:
-            return bytes(await self._sb.files.read(self._anywhere(path), format="bytes"))
-        except NotFoundException:
-            raise FileNotFoundError(path)
-        except (SandboxException, httpx.HTTPError) as e:
-            raise SandboxError(f"read failed: {e}") from e
+        last: Exception | None = None
+        for attempt in (1, 2, 3):
+            try:
+                return bytes(await self._sb.files.read(self._anywhere(path), format="bytes"))
+            except NotFoundException:
+                raise FileNotFoundError(path)
+            except (SandboxException, httpx.HTTPError) as e:
+                # A large read over a poor link times out more often than
+                # the sandbox fails; the read is idempotent, so try again.
+                last = e
+                log.warning("read of %s failed (attempt %d): %s", path, attempt, e)
+                await asyncio.sleep(1.0 * attempt)
+        raise SandboxError(f"read failed: {last}") from last
 
     async def write_bytes(self, path: str, data: bytes) -> None:
         try:
