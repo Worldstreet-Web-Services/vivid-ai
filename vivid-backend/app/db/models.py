@@ -258,6 +258,9 @@ class BuilderProject(Base):
     owner_id: Mapped[str] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), index=True)
     name: Mapped[str] = mapped_column(String(120))
+    #: plan | build. New projects plan first; `POST .../build` moves them on.
+    #: Rows from before plan mode existed default to build (see init_db).
+    mode: Mapped[str] = mapped_column(String(8), default="plan")
     #: spec.md as agreed in plan mode; injected into every turn.
     spec_md: Mapped[str | None] = mapped_column(Text, default=None)
     #: The snapshot the preview is on. Plain string, not an FK: the row is

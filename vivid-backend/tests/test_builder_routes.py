@@ -193,7 +193,7 @@ def test_chat_streams_and_stores_the_turn(client, maker, monkeypatch, fake_manag
                          "arguments": {"path": "src/Page.tsx", "content": "export {}"}}]),
         ("There is a page now.", []),
     ])
-    pid = client.post("/v1/builder/projects", json={}).json()["id"]
+    pid = client.post("/v1/builder/projects", json={"skip_plan": True}).json()["id"]
     with client.stream("POST", f"/v1/builder/projects/{pid}/chat",
                        json={"text": "add a page"}) as r:
         assert r.status_code == 200
@@ -231,7 +231,7 @@ def test_chat_streams_and_stores_the_turn(client, maker, monkeypatch, fake_manag
 
 def test_sandbox_failure_is_a_clean_stream(client, monkeypatch, fake_manager):
     fake_manager.fail = True
-    pid = client.post("/v1/builder/projects", json={}).json()["id"]
+    pid = client.post("/v1/builder/projects", json={"skip_plan": True}).json()["id"]
     r = client.post(f"/v1/builder/projects/{pid}/chat", json={"text": "hi"})
     parts = sse_parts(r.text)
     assert parts[0]["type"] == "error" and "workspace" in parts[0]["errorText"]
@@ -242,7 +242,7 @@ def test_sandbox_failure_is_a_clean_stream(client, monkeypatch, fake_manager):
 
 
 def test_one_turn_at_a_time_and_cancel(client, monkeypatch):
-    pid = client.post("/v1/builder/projects", json={}).json()["id"]
+    pid = client.post("/v1/builder/projects", json={"skip_plan": True}).json()["id"]
     assert client.post(f"/v1/builder/projects/{pid}/cancel").json() == {"cancelled": False}
     assert builder_routes.turns.start(pid) is not None      # a turn in flight
     r = client.post(f"/v1/builder/projects/{pid}/chat", json={"text": "hi"})
@@ -253,7 +253,7 @@ def test_one_turn_at_a_time_and_cancel(client, monkeypatch):
 def test_rate_limit(client, monkeypatch):
     monkeypatch.setattr(settings, "BUILDER_RATE_LIMIT_PER_MINUTE", 1)
     script(monkeypatch, [("ok", [])])
-    pid = client.post("/v1/builder/projects", json={}).json()["id"]
+    pid = client.post("/v1/builder/projects", json={"skip_plan": True}).json()["id"]
     assert client.post(f"/v1/builder/projects/{pid}/chat", json={"text": "a"}).status_code == 200
     r = client.post(f"/v1/builder/projects/{pid}/chat", json={"text": "b"})
     assert r.status_code == 429 and r.json()["error"]["code"] == "rate_limited"
@@ -261,13 +261,13 @@ def test_rate_limit(client, monkeypatch):
 
 def test_not_configured(client, monkeypatch):
     monkeypatch.setattr(settings, "OPENROUTER_API_KEY", "")
-    pid = client.post("/v1/builder/projects", json={}).json()["id"]
+    pid = client.post("/v1/builder/projects", json={"skip_plan": True}).json()["id"]
     r = client.post(f"/v1/builder/projects/{pid}/chat", json={"text": "a"})
     assert r.status_code == 503 and r.json()["error"]["code"] == "not_configured"
 
 
 def test_preview_and_files(client, fake_manager):
-    pid = client.post("/v1/builder/projects", json={}).json()["id"]
+    pid = client.post("/v1/builder/projects", json={"skip_plan": True}).json()["id"]
     r = client.get(f"/v1/builder/projects/{pid}/preview")
     assert r.json() == {"url": "http://fake:5173", "sandbox_id": "fake_1", "driver": "fake"}
     assert client.get(f"/v1/builder/projects/{pid}/files").json() == {
@@ -280,7 +280,7 @@ def test_preview_and_files(client, fake_manager):
 
 
 def test_delete_kills_the_sandbox(client, fake_manager):
-    pid = client.post("/v1/builder/projects", json={}).json()["id"]
+    pid = client.post("/v1/builder/projects", json={"skip_plan": True}).json()["id"]
     assert client.delete(f"/v1/builder/projects/{pid}").status_code == 204
     assert fake_manager.killed == [pid]
     assert client.get(f"/v1/builder/projects/{pid}").status_code == 404
@@ -296,7 +296,7 @@ def test_snapshots_restore_and_usage(client, monkeypatch, fake_manager, fake_blo
         ("done 2", []),
         ("just talk", []),
     ])
-    pid = client.post("/v1/builder/projects", json={}).json()["id"]
+    pid = client.post("/v1/builder/projects", json={"skip_plan": True}).json()["id"]
     for text in ("first", "second", "chat only"):
         assert client.post(f"/v1/builder/projects/{pid}/chat", json={"text": text}).status_code == 200
 
@@ -330,7 +330,7 @@ def test_fresh_sandbox_restores_current_snapshot(client, monkeypatch, fake_manag
                  "arguments": {"path": "src/App.tsx", "content": "built"}}]),
         ("done", []),
     ])
-    pid = client.post("/v1/builder/projects", json={}).json()["id"]
+    pid = client.post("/v1/builder/projects", json={"skip_plan": True}).json()["id"]
     client.post(f"/v1/builder/projects/{pid}/chat", json={"text": "build"})
     # The sandbox dies; a fresh one must come back with the snapshot's files.
     fake_manager.sandbox.files["src/App.tsx"] = "x"
@@ -338,3 +338,70 @@ def test_fresh_sandbox_restores_current_snapshot(client, monkeypatch, fake_manag
     assert client.get(f"/v1/builder/projects/{pid}/preview").status_code == 200
     assert fake_manager.sandbox.files["src/App.tsx"] == "built"
     assert fake_manager.sandbox.restored == 1
+
+
+def test_plan_mode_then_build(client, monkeypatch, fake_manager):
+    """A new project plans without a sandbox, keeps the spec, and after
+    /build the first turn injects the spec and writes spec.md."""
+    from tests.test_builder_planning import QUESTIONS, SPEC
+
+    seen = []
+
+    async def stream_chat(messages, tools, max_tokens=None, endpoint=None, temperature=None):
+        names = [t["function"]["name"] for t in tools]
+        seen.append((names, endpoint.model, messages[0]["content"]))
+        if "ask_user" in names and len(seen) == 1:
+            yield {"type": "tool_calls", "calls": [
+                {"id": "c1", "name": "ask_user", "error": None,
+                 "arguments": {"questions": QUESTIONS}}]}
+        elif "ask_user" in names and len(seen) == 2:
+            yield {"type": "tool_calls", "calls": [
+                {"id": "c2", "name": "write_spec", "error": None, "arguments": {"markdown": SPEC}}]}
+        elif "ask_user" in names:
+            yield {"type": "token", "text": "Spec ready; edit it or build."}
+        else:
+            yield {"type": "token", "text": "Built."}
+        yield {"type": "done", "finish_reason": "stop", "usage": {"prompt_tokens": 1, "completion_tokens": 1}}
+    monkeypatch.setattr(code_llm, "stream_chat", stream_chat)
+    monkeypatch.setattr(settings, "PLAN_MODEL", "vendor/planner")
+    monkeypatch.setattr(settings, "BUILD_MODEL", "vendor/builder")
+
+    pid = client.post("/v1/builder/projects", json={"name": "Salon"}).json()["id"]
+    assert client.get(f"/v1/builder/projects/{pid}").json()["mode"] == "plan"
+
+    parts = sse_parts(client.post(f"/v1/builder/projects/{pid}/chat",
+                                  json={"text": "a booking app for my salon"}).text)
+    kinds = [p["type"] for p in parts if isinstance(p, dict)]
+    assert "tool-input-available" in kinds and parts[-1] == "[DONE]"
+    assert fake_manager.fresh                                    # no sandbox was started
+    assert seen[0][0] == ["ask_user", "write_spec"] and seen[0][1] == "vendor/planner"
+
+    parts = sse_parts(client.post(f"/v1/builder/projects/{pid}/chat",
+                                  json={"text": "Both. Yes.", "images": ["data:image/png;base64,AA"]}).text)
+    assert any(isinstance(p, dict) and p["type"] == "data-spec" for p in parts)
+    proj = client.get(f"/v1/builder/projects/{pid}").json()
+    assert proj["mode"] == "plan" and proj["spec_md"] == SPEC.strip()
+    msgs = client.get(f"/v1/builder/projects/{pid}/messages").json()
+    assert [m["role"] for m in msgs] == ["user", "assistant", "user", "assistant"]
+    assert msgs[2]["parts"][1]["type"] == "file"                # the image rode along
+    assert [p["type"] for p in msgs[1]["parts"] if p["type"].startswith("tool-")] == ["tool-ask_user"]
+
+    edited = SPEC.strip() + "\nAlso: dark mode."
+    client.patch(f"/v1/builder/projects/{pid}", json={"spec_md": edited})
+    assert client.post(f"/v1/builder/projects/{pid}/build").json()["mode"] == "build"
+
+    parts = sse_parts(client.post(f"/v1/builder/projects/{pid}/chat", json={"text": "build it"}).text)
+    assert seen[-1][0][0] == "read_file" and seen[-1][1] == "vendor/builder"
+    assert "Also: dark mode." in seen[-1][2]                     # spec injected into the prompt
+    assert fake_manager.sandbox.files["spec.md"] == edited       # and written to the sandbox
+    assert not fake_manager.fresh
+    u = client.get(f"/v1/builder/projects/{pid}/usage").json()
+    assert u["model_calls"] == 4                                 # three plan calls + one build call
+
+
+def test_skip_plan_starts_in_build_mode(client, monkeypatch, fake_manager):
+    script(monkeypatch, [("Built.", [])])
+    pid = client.post("/v1/builder/projects", json={"skip_plan": True}).json()["id"]
+    assert client.get(f"/v1/builder/projects/{pid}").json()["mode"] == "build"
+    client.post(f"/v1/builder/projects/{pid}/chat", json={"text": "go"})
+    assert not fake_manager.fresh and "spec.md" not in fake_manager.sandbox.files

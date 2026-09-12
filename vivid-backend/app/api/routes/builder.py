@@ -7,7 +7,11 @@
     DELETE /builder/projects/{id}            also kills the sandbox
     GET    /builder/projects/{id}/messages   the thread, parts as streamed
     POST   /builder/projects/{id}/chat       one turn; answers as an AI SDK
-                                             UI Message Stream (SSE)
+                                             UI Message Stream (SSE). In plan
+                                             mode the turn asks questions or
+                                             writes the spec; no sandbox.
+    POST   /builder/projects/{id}/build      leave plan mode; spec.md goes
+                                             into the sandbox
     POST   /builder/projects/{id}/cancel     stop the running turn
     GET    /builder/projects/{id}/preview    the sandbox URL (starts one)
     GET    /builder/projects/{id}/files      source file list
@@ -28,8 +32,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
-from app.builder import routing, snapshots, stream, usage
-from app.builder.loop import TurnRunner, turns
+from app.builder import planning, routing, snapshots, stream, usage
+from app.builder.loop import ModelCall, TurnRunner, turns
+from app.builder.planning import PlanRunner
 from app.builder.sandbox.base import PathError, SandboxError, safe_path
 from app.builder.sandbox.manager import manager
 from app.core.config import settings
@@ -67,7 +72,8 @@ async def _latest_seq(project_id: str, db: AsyncSession) -> int:
 @router.post("/projects", response_model=ProjectOut, status_code=201)
 async def create_project(body: ProjectCreate, user: User = Depends(get_current_user),
                          db: AsyncSession = Depends(get_db)):
-    project = BuilderProject(owner_id=user.id, name=body.name.strip() or "Untitled app")
+    project = BuilderProject(owner_id=user.id, name=body.name.strip() or "Untitled app",
+                             mode="build" if body.skip_plan else "plan")
     db.add(project)
     await db.commit()
     return project
@@ -164,15 +170,18 @@ async def chat(project_id: str, body: ChatIn, request: Request,
     rows = await db.execute(select(BuilderMessage)
                             .where(BuilderMessage.project_id == project_id)
                             .order_by(BuilderMessage.created_at))
-    history = _history(list(rows.scalars()))
+    stored = list(rows.scalars())
+    planning_mode = project.mode == "plan"
+    history = planning.history_from_parts(stored) if planning_mode else _history(stored)
     stage = routing.stage_for(await _latest_seq(project_id, db))
 
     cancel = turns.start(project_id)
     if cancel is None:
         raise APIError(409, "busy", "A turn is already running for this project.")
 
-    user_msg = BuilderMessage(project_id=project_id, role="user",
-                              parts=[{"type": "text", "text": body.text}])
+    user_parts = [{"type": "text", "text": body.text}]
+    user_parts += [{"type": "file", "mediaType": "image/*", "url": u} for u in body.images]
+    user_msg = BuilderMessage(project_id=project_id, role="user", parts=user_parts)
     db.add(user_msg)
     project.updated_at = datetime.now(timezone.utc)
     await db.commit()
@@ -183,8 +192,18 @@ async def chat(project_id: str, body: ChatIn, request: Request,
         collector = stream.PartsCollector()
         runner = None
         try:
+            if planning_mode:
+                runner = PlanRunner(history, body.text, body.images, cancelled=cancel.is_set)
+                async for part in runner.run():
+                    collector.add(part)
+                    yield stream.frame(part)
+                turns.finish(project_id)
+                await _persist_plan_turn(project_id, collector, runner)
+                yield stream.DONE
+                return
             try:
                 sandbox = await _start_sandbox(project_id, redis)
+                await _sync_spec(sandbox, spec_md)
             except (SandboxError, snapshots.SnapshotError) as e:
                 log.error("sandbox for project %s failed: %s", project_id, e)
                 yield stream.frame(stream.error(
@@ -199,15 +218,18 @@ async def chat(project_id: str, body: ChatIn, request: Request,
             log.exception("builder turn failed for project %s", project_id)
             yield stream.frame(stream.error(provider.scrub(str(e))))
         finally:
-            # Stored BEFORE the terminator: a client that fetches the thread
-            # the moment it sees [DONE] must find the assistant message.
-            turns.finish(project_id)
-            await manager.touch(project_id)
-            snapshot = await _persist_turn(project_id, collector, runner)
-            if snapshot is not None:
-                yield stream.frame(stream.data("snapshot", {
-                    "id": snapshot.id, "seq": snapshot.seq}))
-            yield stream.DONE
+            if not planning_mode:
+                # Stored BEFORE the terminator: a client that fetches the
+                # thread the moment it sees [DONE] must find the message.
+                turns.finish(project_id)
+                await manager.touch(project_id)
+                snapshot = await _persist_turn(project_id, collector, runner)
+                if snapshot is not None:
+                    yield stream.frame(stream.data("snapshot", {
+                        "id": snapshot.id, "seq": snapshot.seq}))
+                yield stream.DONE
+            else:
+                turns.finish(project_id)
 
     return StreamingResponse(generate(), media_type=stream.MEDIA_TYPE,
                              headers=stream.HEADERS)
@@ -246,6 +268,55 @@ async def _persist_turn(project_id: str, collector: stream.PartsCollector,
     except Exception as e:
         log.error("could not store the turn for %s: %s", project_id, e)
     return snapshot
+
+
+async def _persist_plan_turn(project_id: str, collector: stream.PartsCollector,
+                             runner: PlanRunner) -> None:
+    if not collector.parts:
+        return
+    try:
+        async with async_session() as db:
+            project = await db.get(BuilderProject, project_id)
+            if project is None:
+                return
+            db.add(BuilderMessage(project_id=project_id, role="assistant",
+                                  parts=collector.parts, model=runner.result.model))
+            if runner.result.spec_md:
+                project.spec_md = runner.result.spec_md
+            await usage.record_model(db, project_id, [
+                ModelCall(model, routing.PLAN, u) for model, u in runner.result.calls])
+            await db.commit()
+    except Exception as e:
+        log.error("could not store the plan turn for %s: %s", project_id, e)
+
+
+async def _sync_spec(sandbox, spec_md: str | None) -> None:
+    """spec.md in the sandbox mirrors the project's spec, so the file the
+    model can read and the text in its prompt never disagree, and the next
+    snapshot carries it."""
+    if not spec_md:
+        return
+    try:
+        current = await sandbox.read_file("spec.md")
+    except FileNotFoundError:
+        current = None
+    if current != spec_md:
+        await sandbox.write_file("spec.md", spec_md)
+
+
+@router.post("/projects/{project_id}/build", response_model=ProjectOut)
+async def start_build(project_id: str, request: Request,
+                      user: User = Depends(get_current_user),
+                      db: AsyncSession = Depends(get_db)):
+    """Leave plan mode. The spec, if any, is what the builder works to; a
+    project may also start building with no spec at all."""
+    project = await _owned(project_id, user, db)
+    if turns.running(project_id):
+        raise APIError(409, "busy", "Wait for the running turn to finish first.")
+    if project.mode != "build":
+        project.mode = "build"
+        await db.commit()
+    return project
 
 
 @router.post("/projects/{project_id}/cancel", response_model=CancelOut)

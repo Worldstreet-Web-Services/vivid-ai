@@ -5,6 +5,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 class ProjectCreate(BaseModel):
     name: str = Field(default="Untitled app", max_length=120)
+    #: Start in build mode with no spec (a developer who knows what they want).
+    skip_plan: bool = False
 
 
 class ProjectUpdate(BaseModel):
@@ -17,6 +19,7 @@ class ProjectOut(BaseModel):
 
     id: str
     name: str
+    mode: str
     spec_md: str | None
     current_snapshot_id: str | None
     backend_mode: str
@@ -37,6 +40,8 @@ class MessageOut(BaseModel):
 
 class ChatIn(BaseModel):
     text: str = Field(min_length=1, max_length=20_000)
+    #: Reference screenshots for plan mode: https or data URLs, at most four.
+    images: list[str] = Field(default_factory=list, max_length=4)
 
 
 class PreviewOut(BaseModel):

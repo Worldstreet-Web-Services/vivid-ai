@@ -37,6 +37,10 @@ async def init_db() -> None:
         await conn.execute(text(
             "CREATE INDEX IF NOT EXISTS ix_api_keys_owner_user_id "
             "ON api_keys (owner_user_id)"))
+        # Builder projects made before plan mode existed skip it.
+        await conn.execute(text(
+            "ALTER TABLE builder_projects ADD COLUMN IF NOT EXISTS "
+            "mode VARCHAR(8) NOT NULL DEFAULT 'build'"))
 
     async with async_session() as db:
         # Prompts are product config and deploy with the backend: upsert so a
