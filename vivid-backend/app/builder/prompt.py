@@ -65,10 +65,13 @@ The service key is only ever used inside edge functions.
 """
 
 
-def system_prompt(spec_md: str | None, context_block: str, backend: bool = False) -> str:
+def system_prompt(spec_md: str | None, context_block: str, backend: bool = False,
+                  assets_block: str = "") -> str:
     parts = [STATIC]
     if backend:
         parts.append("\n" + SUPABASE)
+    if assets_block:
+        parts.append("\n" + assets_block)
     if spec_md and spec_md.strip():
         parts.append("\n## The spec (agreed with the user; build to it)\n" + spec_md.strip())
     parts.append("\n## Project state at the start of this turn\n" + context_block)

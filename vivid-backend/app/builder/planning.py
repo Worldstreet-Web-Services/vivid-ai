@@ -86,7 +86,14 @@ Your job in this conversation:
 what data it keeps, whether people sign in, payments or other integrations, look and \
 feel). Two to six questions with concrete options. Do not ask what you can decide well \
 yourself, and do not ask twice.
-3. When you know enough (usually after one round of questions), call write_spec.
+   Always include one question about pictures and branding when the app would show \
+any (a shop, a portfolio, a restaurant, a brand site): do they have a logo, product \
+photos or brand colours to upload now, or should the first version use placeholders? \
+The user uploads files beside the chat; uploaded files are listed for you under \
+"Files the user uploaded" and appear at /uploads/<name> in the app.
+3. When you know enough (usually after one round of questions), call write_spec. \
+If files were uploaded, name them in the spec where they are used (the logo in the \
+header, each product photo on its product).
 
 The spec has exactly these headings, in this order, each with a few plain lines or \
 bullets: Goal, Users, Pages, Data model, Integrations, Out of scope. Pages lists each \
@@ -183,8 +190,10 @@ class PlanRunner:
     def __init__(self, history: list[dict], user_text: str,
                  images: list[str] | None = None,
                  cancelled: Callable[[], bool] = lambda: False,
-                 message_id: str | None = None) -> None:
+                 message_id: str | None = None,
+                 assets_block: str = "") -> None:
         self.history = history
+        self.assets_block = assets_block
         self.user_text = user_text
         self.images = images
         self.cancelled = cancelled
@@ -195,7 +204,8 @@ class PlanRunner:
         yield stream.start(self.message_id)
         endpoint = routing.endpoint_for(routing.PLAN)
         self.result.model = endpoint.model
-        messages = [{"role": "system", "content": SYSTEM}]
+        system = SYSTEM + ("\n" + self.assets_block if self.assets_block else "")
+        messages = [{"role": "system", "content": system}]
         messages += self.history
         messages.append({"role": "user", "content": user_content(self.user_text, self.images)})
 

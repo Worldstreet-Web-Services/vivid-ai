@@ -53,7 +53,7 @@ class FakeSandbox(Sandbox):
         self.blobs[path] = data
 
     async def list_files(self) -> list[str]:
-        return sorted(self.files)
+        return sorted(set(self.files) | {k for k in self.blobs if not k.startswith("/")})
 
     async def dev_server_logs(self, lines: int = 100) -> str:
         return "\n".join(self.log.splitlines()[-lines:])

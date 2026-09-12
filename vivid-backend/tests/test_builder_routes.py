@@ -595,3 +595,55 @@ def test_publish_refused_when_unconfigured_or_busy(client, monkeypatch):
     builder_routes.turns.start(pid)
     r = client.post(f"/v1/builder/projects/{pid}/publish")
     assert r.status_code == 409
+
+
+def test_assets_upload_list_delete_and_prompting(client, monkeypatch, fake_manager, fake_blob):
+    """Upload lands in the store and the live sandbox, is listed with a path
+    and URL, is described to the build model and shown to the plan model,
+    and delete removes it everywhere."""
+    from app.builder import blob as blob_mod
+    from tests.test_builder_assets import png
+    monkeypatch.setattr(blob_mod, "presigned_url", lambda key, expires_in=3600: f"https://r2/{key}")
+
+    pid = client.post("/v1/builder/projects", json={"name": "Kicks"}).json()["id"]  # plan mode
+    fake_manager.fresh = False                                   # a live sandbox exists
+    r = client.post(f"/v1/builder/projects/{pid}/assets",
+                    files={"file": ("Air Max 90.PNG", png(30, 20), "image/png")})
+    assert r.status_code == 201, r.text
+    asset = r.json()
+    assert asset["name"] == "air-max-90.png" and asset["path"] == "/uploads/air-max-90.png"
+    assert asset["url"].startswith("https://r2/") and asset["meta"] == {"width": 30, "height": 20}
+    assert fake_manager.sandbox.blobs["public/uploads/air-max-90.png"] == png(30, 20)
+    assert any(k.endswith("-air-max-90.png") for k in fake_blob)
+
+    r = client.post(f"/v1/builder/projects/{pid}/assets",
+                    files={"file": ("virus.exe", b"MZ", "application/octet-stream")})
+    assert r.status_code == 400 and r.json()["error"]["code"] == "bad_asset"
+    assert [a["name"] for a in client.get(f"/v1/builder/projects/{pid}/assets").json()] == ["air-max-90.png"]
+
+    seen = []
+
+    async def stream_chat(messages, tools, max_tokens=None, endpoint=None, temperature=None):
+        seen.append([dict(m) for m in messages])       # a copy: the runner appends later
+        yield {"type": "token", "text": "ok"}
+        yield {"type": "done", "finish_reason": "stop", "usage": None}
+    monkeypatch.setattr(code_llm, "stream_chat", stream_chat)
+
+    # Plan turn: the list is in the prompt and the image goes along as a picture.
+    client.post(f"/v1/builder/projects/{pid}/chat", json={"text": "a sneaker shop"})
+    assert "/uploads/air-max-90.png (image/png" in seen[-1][0]["content"]
+    assert "logo, product photos" in seen[-1][0]["content"]
+    user = seen[-1][-1]["content"]
+    assert user[1]["type"] == "image_url" and user[1]["image_url"]["url"].startswith("https://r2/")
+
+    # Build turn: the list is in the prompt; a sandbox missing the file gets it.
+    client.post(f"/v1/builder/projects/{pid}/build")
+    del fake_manager.sandbox.blobs["public/uploads/air-max-90.png"]
+    client.post(f"/v1/builder/projects/{pid}/chat", json={"text": "build"})
+    assert "## Files the user uploaded" in seen[-1][0]["content"]
+    assert fake_manager.sandbox.blobs["public/uploads/air-max-90.png"] == png(30, 20)
+
+    assert client.delete(f"/v1/builder/projects/{pid}/assets/{asset['id']}").status_code == 204
+    assert client.get(f"/v1/builder/projects/{pid}/assets").json() == []
+    assert not any(k.endswith("-air-max-90.png") for k in fake_blob)
+    assert any(c.startswith("rm -f public/uploads/air-max-90.png") for c in fake_manager.sandbox.commands)

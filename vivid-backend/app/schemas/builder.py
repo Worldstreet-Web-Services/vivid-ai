@@ -104,3 +104,18 @@ class PublishOut(BaseModel):
     error: str | None
     created_at: datetime
     updated_at: datetime
+
+
+class AssetOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    name: str
+    mime: str
+    size_bytes: int
+    #: Where the app serves it: /uploads/<name>.
+    path: str = ""
+    #: A time-limited URL for showing it in a client.
+    url: str = ""
+    meta: dict | None = None
+    created_at: datetime

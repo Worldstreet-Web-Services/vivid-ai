@@ -365,3 +365,25 @@ class BuilderUsageEvent(Base):
     meta: Mapped[dict | None] = mapped_column(JSONB, default=None)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_now, index=True)
+
+
+class BuilderAsset(Base):
+    """A file the user gave the builder (logo, product photos, a font). The
+    bytes live in the blob store; a copy sits in the app at
+    public/uploads/<name>, so the site serves it at /uploads/<name> and
+    snapshots carry it."""
+    __tablename__ = "builder_assets"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("builder_projects.id", ondelete="CASCADE"), index=True)
+    #: Safe file name, unique within the project.
+    name: Mapped[str] = mapped_column(String(160))
+    mime: Mapped[str] = mapped_column(String(128))
+    size_bytes: Mapped[int] = mapped_column(BigInteger)
+    r2_key: Mapped[str] = mapped_column(String(512))
+    #: Width x height for images, when known.
+    meta: Mapped[dict | None] = mapped_column(JSONB, default=None)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    __table_args__ = (UniqueConstraint("project_id", "name", name="uq_builder_assets_name"),)

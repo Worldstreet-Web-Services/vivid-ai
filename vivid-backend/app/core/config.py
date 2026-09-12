@@ -389,6 +389,11 @@ class Settings(BaseSettings):
     # A built site above this is refused (a stray video in public/).
     BUILDER_PUBLISH_MAX_BYTES: int = 25 * 1024 * 1024
 
+    # User-uploaded assets for the builder (logos, product photos, fonts).
+    BUILDER_ASSET_MAX_BYTES: int = 8 * 1024 * 1024
+    BUILDER_ASSETS_MAX_TOTAL_BYTES: int = 48 * 1024 * 1024
+    BUILDER_ASSETS_PER_PROJECT: int = 60
+
     # Limits
     RATE_LIMIT_PER_MINUTE: int = 20
     DEFAULT_CLIENT_ID: str = "vivid_web"

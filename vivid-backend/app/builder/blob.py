@@ -71,6 +71,17 @@ def snapshot_key(project_id: str, seq: int) -> str:
     return f"{settings.R2_PREFIX}projects/{project_id}/snapshots/{seq}.tgz"
 
 
+def asset_key(project_id: str, asset_id: str, name: str) -> str:
+    return f"{settings.R2_PREFIX}projects/{project_id}/assets/{asset_id}-{name}"
+
+
+def presigned_url(key: str, expires_in: int = 3600) -> str:
+    """A time-limited GET URL: for showing an asset in a client, and for
+    handing an image to the plan model."""
+    return client().generate_presigned_url(
+        "get_object", Params={"Bucket": _bucket(), "Key": key}, ExpiresIn=expires_in)
+
+
 async def put(key: str, data: bytes, content_type: str = "application/gzip") -> None:
     try:
         await asyncio.to_thread(client().put_object, Bucket=_bucket(), Key=key,

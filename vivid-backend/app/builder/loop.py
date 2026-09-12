@@ -129,9 +129,11 @@ class TurnRunner:
                  recent_files: list[str] | None = None,
                  cancelled: Callable[[], bool] = lambda: False,
                  message_id: str | None = None,
-                 backend: tools.Backend | None = None) -> None:
+                 backend: tools.Backend | None = None,
+                 assets_block: str = "") -> None:
         self.sandbox = sandbox
         self.backend = backend
+        self.assets_block = assets_block
         self.stage = stage
         self.history = history
         self.user_text = user_text
@@ -187,7 +189,8 @@ class TurnRunner:
         block = await context.build(self.sandbox, self.recent_files)
         messages = [{"role": "system",
                      "content": prompt.system_prompt(self.spec_md, block,
-                                                     backend=self.backend is not None)}]
+                                                     backend=self.backend is not None,
+                                                     assets_block=self.assets_block)}]
         messages += self.history
         messages.append({"role": "user", "content": self.user_text})
 

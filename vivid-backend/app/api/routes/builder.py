@@ -21,6 +21,9 @@
     GET    /builder/projects/{id}/usage      this project's metered totals
     POST   /builder/projects/{id}/supabase   link a Supabase project (byo)
     DELETE /builder/projects/{id}/supabase   unlink
+    POST   /builder/projects/{id}/assets     upload a logo, photo, font (multipart)
+    GET    /builder/projects/{id}/assets
+    DELETE /builder/projects/{id}/assets/{asset_id}
     POST   /builder/projects/{id}/publish    build and put the app on a live URL (202)
     GET    /builder/projects/{id}/publishes  history, newest first
     GET    /builder/projects/{id}/publishes/{publish_id}
@@ -32,25 +35,25 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, File, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
-from app.builder import (planning, publish, routing, secrets, snapshots, stream, supabase,
-                         tools, usage)
+from app.builder import (assets, blob, planning, publish, routing, secrets, snapshots,
+                         stream, supabase, tools, usage)
 from app.builder.loop import ModelCall, TurnRunner, turns
 from app.builder.planning import PlanRunner
 from app.builder.sandbox.base import PathError, SandboxError, safe_path
 from app.builder.sandbox.manager import manager
 from app.core.config import settings
 from app.core.errors import APIError
-from app.db.models import (BuilderMessage, BuilderProject, BuilderPublish, BuilderSnapshot,
-                           Connector, User)
+from app.db.models import (BuilderAsset, BuilderMessage, BuilderProject, BuilderPublish,
+                           BuilderSnapshot, Connector, User)
 from app.services.connectors import supabase as supabase_connector
 from app.db.session import async_session
-from app.schemas.builder import (CancelOut, ChatIn, FileOut, FilesOut, MessageOut,
+from app.schemas.builder import (AssetOut, CancelOut, ChatIn, FileOut, FilesOut, MessageOut,
                                  PreviewOut, ProjectCreate, ProjectOut, ProjectUpdate,
                                  PublishOut, SnapshotOut, SupabaseLinkIn, UsageOut)
 from app.services import rate_limit
@@ -198,13 +201,21 @@ async def chat(project_id: str, body: ChatIn, request: Request,
     spec_md, recent = project.spec_md, _recent(project)
     backend = None if planning_mode else await _backend_for(project, user, db)
     env_vars = None if planning_mode else await _env_for(project, db)
+    uploaded = await assets.list_for(db, project_id)
+    assets_block = assets.describe(uploaded)
+    plan_images = list(body.images)
+    if planning_mode and uploaded:
+        for url in assets.image_urls(uploaded):
+            if len(plan_images) < planning.MAX_IMAGES:
+                plan_images.append(url)
 
     async def generate():
         collector = stream.PartsCollector()
         runner = None
         try:
             if planning_mode:
-                runner = PlanRunner(history, body.text, body.images, cancelled=cancel.is_set)
+                runner = PlanRunner(history, body.text, plan_images, cancelled=cancel.is_set,
+                                    assets_block=assets_block)
                 async for part in runner.run():
                     collector.add(part)
                     yield stream.frame(part)
@@ -216,13 +227,15 @@ async def chat(project_id: str, body: ChatIn, request: Request,
                 sandbox = await _start_sandbox(project_id, redis)
                 await _sync_spec(sandbox, spec_md)
                 await _sync_env(sandbox, env_vars)
+                await assets.sync(sandbox, uploaded)
             except (SandboxError, snapshots.SnapshotError) as e:
                 log.error("sandbox for project %s failed: %s", project_id, e)
                 yield stream.frame(stream.error(
                     "The workspace could not be started. Please try again."))
                 return
             runner = TurnRunner(sandbox, stage, history, body.text, spec_md, recent,
-                                cancelled=cancel.is_set, backend=backend)
+                                cancelled=cancel.is_set, backend=backend,
+                                assets_block=assets_block)
             async for part in runner.run():
                 collector.add(part)
                 yield stream.frame(part)
@@ -420,6 +433,67 @@ async def unlink_supabase(project_id: str, user: User = Depends(get_current_user
     await secrets.delete_secret(db, project_id, "SUPABASE_ANON_KEY")
     await db.commit()
     return project
+
+
+# ---------------------------------------------------------------- assets
+def _asset_out(asset: BuilderAsset) -> AssetOut:
+    out = AssetOut.model_validate(asset)
+    out.path = assets.public_path(asset)
+    try:
+        out.url = blob.presigned_url(asset.r2_key)
+    except Exception as e:                       # the store is down; the row still lists
+        log.warning("could not presign asset %s: %s", asset.id, e)
+    return out
+
+
+@router.post("/projects/{project_id}/assets", response_model=AssetOut, status_code=201)
+async def upload_asset(project_id: str, request: Request, file: UploadFile = File(...),
+                       user: User = Depends(get_current_user),
+                       db: AsyncSession = Depends(get_db)):
+    """Give the builder a file. It lands in the app at /uploads/<name> (a
+    live sandbox gets it at once; a fresh one on start), and the model is
+    told about it in every turn."""
+    await _owned(project_id, user, db)
+    data = await file.read()
+    try:
+        asset = await assets.add(db, project_id, file.filename or "file",
+                                 file.content_type or "", data)
+    except assets.AssetError as e:
+        raise APIError(400, "bad_asset", str(e))
+    except blob.BlobError as e:
+        log.error("asset upload to the store failed: %s", e)
+        raise APIError(503, "storage_unavailable", "The file could not be stored. Try again.")
+    await db.commit()
+    sandbox = manager.peek(project_id)
+    if sandbox is not None:
+        try:
+            await assets.write_into(sandbox, asset, data)
+        except SandboxError as e:
+            log.warning("asset %s not written to the live sandbox: %s", asset.name, e)
+    return _asset_out(asset)
+
+
+@router.get("/projects/{project_id}/assets", response_model=list[AssetOut])
+async def list_assets(project_id: str, user: User = Depends(get_current_user),
+                      db: AsyncSession = Depends(get_db)):
+    await _owned(project_id, user, db)
+    return [_asset_out(a) for a in await assets.list_for(db, project_id)]
+
+
+@router.delete("/projects/{project_id}/assets/{asset_id}", status_code=204)
+async def delete_asset(project_id: str, asset_id: str,
+                       user: User = Depends(get_current_user),
+                       db: AsyncSession = Depends(get_db)):
+    await _owned(project_id, user, db)
+    asset = await db.get(BuilderAsset, asset_id)
+    if asset is None or asset.project_id != project_id:
+        raise APIError(404, "not_found", "No such file")
+    sandbox = manager.peek(project_id)
+    if sandbox is not None:
+        await sandbox.run(f"rm -f {assets.sandbox_path(asset)}", timeout=15)
+    await db.delete(asset)
+    await db.commit()
+    await blob.delete_prefix(asset.r2_key)
 
 
 # --------------------------------------------------------------- publish
