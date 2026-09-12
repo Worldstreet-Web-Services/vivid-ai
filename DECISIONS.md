@@ -308,3 +308,14 @@ should change.
 The Pages project `vivid-apps` was created by the first publish. Nothing
 unpublishes yet: deleting a project leaves its alias live until a later
 phase adds deployment deletion.
+
+## 11. Uploaded assets (2026-09-12)
+
+Asked for after phase 5: "users can drop assets, the AI should ask about
+pictures". Files go to R2 and into the app at `public/uploads/<name>`
+(served at `/uploads/<name>`), so they are ordinary static files in the
+build and in snapshots. The plan prompt now always asks about a logo,
+photos and brand colours for anything visual, the uploaded list is in every
+prompt, and plan turns see the images. Chosen over storing uploads only in
+R2 and rewriting URLs, because a static file in `public/` needs no runtime
+and publishes with the site.

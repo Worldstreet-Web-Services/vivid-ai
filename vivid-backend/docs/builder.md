@@ -81,6 +81,29 @@ and `step-start`, `data-*` parts are kept in order. The user's own message is
 a single text part. A thread reloaded from here is the same shape a client
 holds after watching the stream.
 
+## Uploaded files (logos, product photos, fonts)
+
+```
+POST   /v1/builder/projects/{id}/assets            multipart `file` -> asset (201)
+GET    /v1/builder/projects/{id}/assets            -> [asset] with `path` and a time-limited `url`
+DELETE /v1/builder/projects/{id}/assets/{asset_id}
+```
+
+An upload is stored in R2 and copied into the app at `public/uploads/<name>`,
+so the preview and the published site serve it at `/uploads/<name>` (the
+`path` field). Names are made URL-safe ("Air Max 90.PNG" becomes
+`air-max-90.png`); uploading the same name again replaces the file. Types:
+PNG, JPEG, WebP, GIF, SVG, AVIF, WOFF/WOFF2/TTF/OTF, PDF, MP4, MP3; 8 MB per
+file, 48 MB per project. Uploads ride along in snapshots, and a fresh
+sandbox gets any it lacks from the store.
+
+The model is told about uploads in every turn ("Files the user uploaded",
+with paths). In plan mode it asks whether the user has a logo and product
+photos or wants placeholders, and the uploaded images are passed to the
+plan model as pictures so the spec can name them. A client shows the
+upload control next to the chat; the user uploads, then answers the
+question in text ("uploaded the logo and three photos").
+
 ## Plan mode
 
 A new project starts in `mode: "plan"` (pass `skip_plan: true` to start
