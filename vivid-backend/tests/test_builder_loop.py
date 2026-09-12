@@ -248,3 +248,20 @@ async def test_keepalive_runs_after_every_step(monkeypatch):
                         keepalive=keepalive)
     await collect(runner)
     assert runner.result.reason == loop.ANSWERED and len(ticks) == 2   # two tool steps
+
+
+async def test_raw_ssl_error_mid_stream_is_retried(monkeypatch):
+    """A corrupted TLS record surfaces as ssl.SSLError from the stream
+    reader; the adapter must turn it into a retryable failure."""
+    import ssl
+    from app.services.models_gateway import code_llm as adapter, provider
+
+    class Broken:
+        def stream(self, *a, **k):
+            raise ssl.SSLError("bad record mac")
+    monkeypatch.setattr(adapter.http, "client", lambda: Broken())
+    monkeypatch.setattr(adapter, "_RETRY_DELAY", 0)
+    ep = provider.openrouter_model("vendor/x")
+    with pytest.raises(adapter.CodeLLMUnavailable):
+        async for _ in adapter.stream_chat([{"role": "user", "content": "hi"}], [], endpoint=ep):
+            pass

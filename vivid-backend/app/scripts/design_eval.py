@@ -205,11 +205,22 @@ async def main(args) -> int:
         print(f"== {slug}", flush=True)
         item = {}
         for variant in ("a", "b"):
-            item[variant] = await run_variant(slug, spec, variant, args.publish)
+            try:
+                item[variant] = await run_variant(slug, spec, variant, args.publish)
+            except Exception as e:                 # one broken run must not end the eval
+                item[variant] = {"variant": variant, "project_id": "", "reason": "crashed",
+                                 "error": f"{e.__class__.__name__}: {str(e)[:200]}", "steps": 0,
+                                 "critique_rounds": 0, "seconds": 0, "shots": {}, "shot_data": {},
+                                 "url": None}
+                print(f"   {variant.upper()}: crashed: {item[variant]['error']}", flush=True)
+                continue
             r = item[variant]
             print(f"   {variant.upper()}: {r['reason']} steps={r['steps']} critique={r['critique_rounds']} "
                   f"{r['seconds']}s shots={list(r['shots'])} {r['url'] or ''}", flush=True)
-        item["judge"] = await judge(item["a"], item["b"])
+        if item["a"]["shots"] and item["b"]["shots"]:
+            item["judge"] = await judge(item["a"], item["b"])
+        else:
+            item["judge"] = {"error": "a variant produced no screenshots"}
         j = item["judge"]
         if "error" not in j:
             totals["a"] += j["a"]["total"]; totals["b"] += j["b"]["total"]; totals["judged"] += 1
@@ -232,7 +243,8 @@ async def main(args) -> int:
         async with async_session() as db:
             for item in report["specs"].values():
                 for v in ("a", "b"):
-                    row = await db.get(BuilderProject, item[v]["project_id"])
+                    row = (await db.get(BuilderProject, item[v]["project_id"])
+                           if item[v].get("project_id") else None)
                     if row is not None:
                         await db.delete(row)
             await db.commit()

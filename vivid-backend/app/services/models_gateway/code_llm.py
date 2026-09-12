@@ -17,6 +17,7 @@ tools at all.
 import asyncio
 import json
 import logging
+import ssl
 
 import httpx
 
@@ -30,8 +31,11 @@ class CodeLLMUnavailable(provider.UpstreamError):
     public = "The coding model is unavailable right now. Please try again in a moment."
 
 
+# ssl.SSLError and OSError: a corrupted TLS record or a dropped socket can
+# surface raw from the stream reader, unmapped by httpx, and would otherwise
+# escape as a crash instead of a retry.
 _TRANSIENT = (httpx.ConnectError, httpx.ConnectTimeout, httpx.RemoteProtocolError,
-              httpx.ReadTimeout, httpx.ReadError)
+              httpx.ReadTimeout, httpx.ReadError, ssl.SSLError, OSError)
 _RETRY_DELAY = 0.5
 _VLLM_FLAGS = "--enable-auto-tool-choice --tool-call-parser mistral"
 
