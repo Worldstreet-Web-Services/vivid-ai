@@ -120,11 +120,21 @@ class Pages:
         return {"Authorization": f"Bearer {token or settings.CF_API_TOKEN}"}
 
     async def _call(self, method: str, url: str, *, token: str | None = None, **kw):
-        try:
-            r = await http.client().request(method, url, headers=self._headers(token),
-                                            timeout=120, **kw)
-        except httpx.HTTPError as e:
-            raise PublishError(f"Cloudflare could not be reached ({e.__class__.__name__}).")
+        last: Exception | None = None
+        for attempt in (1, 2, 3):
+            try:
+                r = await http.client().request(method, url, headers=self._headers(token),
+                                                timeout=120, **kw)
+                break
+            except httpx.HTTPError as e:
+                # A dropped connection mid-upload is the common failure on a
+                # poor link; the calls are idempotent, so try again.
+                last = e
+                log.warning("Cloudflare call failed (attempt %d): %s", attempt,
+                            e.__class__.__name__)
+                await asyncio.sleep(1.5 * attempt)
+        else:
+            raise PublishError(f"Cloudflare could not be reached ({last.__class__.__name__}).")
         try:
             body = r.json()
         except ValueError:
