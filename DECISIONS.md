@@ -379,3 +379,15 @@ real product photography, trust strip, footer with address and hours; phone
 layout stacks cleanly. Built before the completeness rules, so five products
 rather than eight or more. Wall time is the cost to watch: a first build
 with images and a critique is 15 to 25 minutes on the current models.
+
+### Lost work on restart (2026-09-12)
+
+A backend restart killed the live sneaker sandbox (the shutdown hook
+killed every sandbox) before its snapshot existed, so the code was lost
+while the published site stayed up. Two changes: sandboxes are left alive
+at shutdown by default (`BUILDER_KILL_SANDBOXES_ON_SHUTDOWN=false`; Redis
+lets the next process reconnect and E2B's timeout reaps the rest), and
+`public/uploads` is excluded from snapshots because assets already live in
+R2 and are synced back on restore. The 13.7 MB snapshot the images made
+was also why the end-of-turn read had timed out. Snapshots are back to
+kilobytes.

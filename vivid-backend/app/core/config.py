@@ -331,6 +331,11 @@ class Settings(BaseSettings):
     BUILDER_SANDBOX_IDLE_SECONDS: int = 600
     BUILDER_SANDBOX_TIMEOUT_SECONDS: int = 900
     BUILDER_DEV_PORT: int = 5173
+    # Kill live sandboxes when this process stops. Off: a restart or deploy
+    # leaves them running, the next process reconnects through Redis, and
+    # E2B's own timeout reaps the ones nobody comes back for. On (dev only)
+    # a stop kills them, and unsnapshotted work in them is lost.
+    BUILDER_KILL_SANDBOXES_ON_SHUTDOWN: bool = False
     # How long get_or_create waits for the dev server to answer.
     BUILDER_DEV_SERVER_WAIT_SECONDS: int = 60
     # The template's source on disk, for the local driver and the eval.

@@ -20,7 +20,11 @@ from app.db.models import BuilderProject, BuilderSnapshot
 
 log = logging.getLogger("vivid.builder.snapshots")
 
-EXCLUDES = ("node_modules", "dist", ".vite", ".vivid-dev.log")
+#: public/uploads is not in a snapshot: every upload and generated image is
+#: already in the blob store as an asset and is synced back into a fresh
+#: sandbox. Keeping them out holds a snapshot at kilobytes, not megabytes,
+#: which is what a read over a flaky connection can finish.
+EXCLUDES = ("node_modules", "dist", ".vite", ".vivid-dev.log", "public/uploads")
 _GIT_IDENTITY = "-c user.name=Vivid -c user.email=builder@vivid"
 
 

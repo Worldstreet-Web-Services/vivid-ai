@@ -40,7 +40,8 @@ async def lifespan(app: FastAPI):
     sweeper = asyncio.create_task(sandbox_manager.sweeper(app.state.redis))
     yield
     sweeper.cancel()
-    await sandbox_manager.kill_all(app.state.redis)
+    if settings.BUILDER_KILL_SANDBOXES_ON_SHUTDOWN:
+        await sandbox_manager.kill_all(app.state.redis)
     await gateway_http.aclose()
     if app.state.arq is not None:
         await app.state.arq.aclose()
