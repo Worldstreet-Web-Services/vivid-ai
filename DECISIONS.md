@@ -319,3 +319,41 @@ photos and brand colours for anything visual, the uploaded list is in every
 prompt, and plan turns see the images. Chosen over storing uploads only in
 R2 and rewriting URLs, because a static file in `public/` needs no runtime
 and publishes with the site.
+
+### Found by the sneaker-store run (2026-09-12)
+
+A first build with uploads ran 1190 s, longer than the sandbox's 900 s E2B
+lifetime, which was extended only between turns. The sandbox died
+mid-turn, the next request made a fresh one, and uploads were synced only
+on chat turns, so the fresh sandbox had no uploads and publish shipped the
+bare template. Fixed: the turn extends the sandbox after every step; a
+fresh sandbox is given spec.md, .env and the uploads on every route; the
+plan model writes the spec after at most two rounds of questions; E2B
+create retries once on a dropped connection.
+
+## 12. Design quality (2026-09-12)
+
+The owner's concern: AI-built sites look generated. Built as three parts, all
+automatic and invisible to users:
+
+- **Skills.** A folder of packaged expertise (`skills/design/SKILL.md`,
+  references, recipes) attached to a turn by the loader, the way Claude Code
+  loads a skill by matching a task to its description. Here the match is by
+  project state: design skill on every UI turn, one recipe by words in the
+  spec. Files in the repo, so a design change is a reviewed diff and can be
+  measured.
+- **Seeing the page.** Chromium is baked into the sandbox template
+  (`scripts/screenshot.mjs`), so the loop screenshots the dev server at
+  desktop and phone widths after the model answers, and the model critiques
+  and fixes its own page. Chosen over the separate Playwright service: no
+  extra deployment, the preview URL needs no auth from inside the sandbox,
+  and it works on the local driver too.
+- **Images when the user has none.** A `generate_image` tool through the
+  existing OpenRouter image gateway, stored as an asset. The sneaker run
+  showed the gap: my test uploads were flat colour blocks and the page
+  faithfully showed flat colour blocks. Logos are not generated; the skill
+  uses a wordmark, because text logos stay sharp and generated marks do not.
+- **Measuring.** `design_eval` renders each spec as A (skill and critique
+  off) and B (on), publishes both, and a different vendor's model scores
+  the screenshots blind. The rule: a skill change that does not move the
+  score does not ship.

@@ -56,6 +56,7 @@ Parts, in the order a turn produces them:
 {"type":"data-notice","data":{"text":"The model connection dropped; retrying.","reason":"stream_retry","attempt":1}}
 {"type":"data-notice","data":{"text":"Retrying with a different model.","reason":"step_limit"}}
 {"type":"data-usage","data":{"model":"...","steps":7,"tokens_in":..,"tokens_out":..,"reason":"answered"}}
+{"type":"data-critique","data":{"round":1,"screenshots":[{"name":"desktop","width":1280,"url":"..."},{"name":"mobile","width":390,"url":"..."}]}}
 {"type":"data-snapshot","data":{"id":"...","seq":3}}   after finish, when the turn changed files
 {"type":"error","errorText":"..."}                   the turn failed; stream still ends normally
 {"type":"abort","reason":"cancelled by the user"}
@@ -63,7 +64,8 @@ Parts, in the order a turn produces them:
 ```
 
 Tool names: `read_file`, `write_file`, `edit_file`, `list_files`,
-`run_command`, `get_dev_server_logs`. Tool outputs are strings, at most 4,000
+`run_command`, `get_dev_server_logs`, `generate_image`, and with a Supabase
+backend `apply_migration`, `deploy_edge_function`, `set_secret`. Tool outputs are strings, at most 4,000
 characters. A client that wants to show "what the agent is doing" renders the
 tool parts; one that wants only the conversation renders the text parts.
 
@@ -103,6 +105,35 @@ photos or wants placeholders, and the uploaded images are passed to the
 plan model as pictures so the spec can name them. A client shows the
 upload control next to the chat; the user uploads, then answers the
 question in text ("uploaded the logo and three photos").
+
+## Design quality
+
+Three things work together so a first build looks designed, on phones and
+desktop, without the user knowing any of it exists:
+
+- **The design skill** (`skills/design/`): a written method (type scale,
+  spacing rhythm, hierarchy, contrast, imagery, states, mobile first),
+  curated palettes and font pairings, and one page recipe (shop, booking,
+  landing page, portfolio, dashboard) chosen from the spec. The loader
+  attaches it to every build and edit turn's prompt. `BUILDER_DESIGN_SKILL`
+  turns it off.
+- **The critique round**: after the model answers a turn that changed
+  files, the sandbox screenshots the page at 1280px and 390px (Chromium is
+  in the template), the pictures go to the model with a critique brief, and
+  it fixes what it sees with a few extra steps. The stream carries a
+  `data-critique` part with the round number and time-limited screenshot
+  URLs, so a client can show "checking how it looks". Settings:
+  `BUILDER_DESIGN_CRITIQUE`, `BUILDER_CRITIQUE_ROUNDS`, `BUILDER_CRITIQUE_STEPS`.
+- **Generated images**: when the user uploaded nothing, the model has a
+  `generate_image(prompt, name, aspect)` tool. The picture is rendered by
+  the image model, stored like an upload (R2 and `public/uploads/<name>`),
+  listed in `GET .../assets`, and used by path. Logos are not generated; the
+  skill sets the brand name as a wordmark. `BUILDER_IMAGES_PER_TURN` caps it.
+
+`python -m app.scripts.design_eval --publish --html design.html` renders
+three specs with and without the skill and critique, publishes both, has a
+different model score them blind on hierarchy, spacing, consistency,
+readability and mobile, and writes a page with every A next to its B.
 
 ## Plan mode
 
