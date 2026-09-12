@@ -172,3 +172,29 @@ Template source lives in `sandbox-templates/vivid-web/` at the repo root
    the client answers by sending the next user message. Assumed acceptable.
 4. Cloud gating: a `plan` column on the existing `users` table (free/pro).
    Assumed acceptable.
+
+## 6. Phase 1 result (2026-09-12)
+
+Run through `/v1/builder` against E2B and OpenRouter with the configured
+models (build/edit deepseek/deepseek-v4.1-flash, fallback z-ai/glm-5.3-flash),
+one project, prompts back to back:
+
+| prompt | steps | typecheck | fallback | wall time |
+|---|---|---|---|---|
+| todo app with dark mode | 7 | clean | no | 126 s |
+| add a counter page + nav | 6 | clean | no | 76 s |
+| make buttons rounded and blue | 5 | clean | no | 78 s |
+| install zustand and use it | 10 | clean | no | 92 s |
+| fix the delete button (after breaking it) | 5 | clean | no | 34 s |
+
+Sandbox boot to dev server: about 5 s. A typecheck after a write: 4 to 6 s.
+The template build on E2B takes 45 s.
+
+Two things learned and fixed on the way: build steps in the Template SDK run
+as `user`, so apt needs `user="root"`; and nothing may be awaited after the
+stream's terminator, because the client closing the connection cancels it
+silently (the assistant message is now stored before `[DONE]`).
+
+Known gap, by design until phase 2: a sandbox that dies (idle kill, the E2B
+lifetime, a backend restart past it) comes back as a fresh template, so the
+app built so far is lost. Snapshots are the fix.
