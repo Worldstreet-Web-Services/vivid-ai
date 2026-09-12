@@ -13,6 +13,7 @@ a tool result is always paired with the assistant turn that asked for it.
 import asyncio
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import AsyncIterator, Awaitable, Callable
 
@@ -70,6 +71,20 @@ class TurnResult:
 
 
 STREAM_RETRY_NOTICE = "The model connection dropped; retrying."
+
+CONTINUE_NUDGE = ("Go on and do it now with the tools; do not describe what you are about "
+                  "to do. Reply to the user only when the work is complete.")
+
+#: A final reply that says what comes next instead of what was done.
+_INTENT = re.compile(
+    r"(let me|let's|i['’]ll|i will|now i|next[, ]|i am going to|i'm going to|"
+    r"going to (build|create|write|add|wire|set up)|then build|then i)\b[^.!?]*[.!]?\s*$",
+    re.IGNORECASE)
+
+
+def _announces_more_work(text: str) -> bool:
+    tail = (text or "").strip()[-220:]
+    return bool(tail) and bool(_INTENT.search(tail))
 
 COMPLETION_BRIEF = """Before we show this to the user, review the app against the spec, page by \
 page. Check: every page in the spec's Pages section exists, is routed, and is linked from the \
@@ -231,10 +246,13 @@ class TurnRunner:
         messages.append({"role": "user", "content": self.user_text})
 
         strikes = 0
-        first_build = stage == routing.BUILD
+        # The turn's stage, not the attempt's: a fallback attempt of a first
+        # build is still a first build (budget, review, critique).
+        first_build = self.stage == routing.BUILD
         budget = settings.BUILDER_BUILD_MAX_STEPS if first_build else settings.BUILDER_MAX_STEPS
         completion_left = settings.BUILDER_COMPLETION_ROUNDS if first_build else 0
         critique_left = settings.BUILDER_CRITIQUE_ROUNDS if self.critique else 0
+        nudges_left = 2
         review_deadline = None
         step = 0
         while True:
@@ -284,6 +302,12 @@ class TurnRunner:
             if not calls:
                 messages.append({"role": "assistant", "content": text})
                 yield stream.finish_step()
+                if nudges_left > 0 and _announces_more_work(text):
+                    # "Let me build the pages." with no tool call is not the
+                    # end of the turn; tell the model to go on.
+                    nudges_left -= 1
+                    messages.append({"role": "user", "content": CONTINUE_NUDGE})
+                    continue
                 self.result.reason = ANSWERED
                 if completion_left > 0 and self.result.touched:
                     # Content before looks: is the whole spec there?

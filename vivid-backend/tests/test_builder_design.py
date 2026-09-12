@@ -302,3 +302,47 @@ async def test_generate_image_kinds(monkeypatch):
     assert prompts[0][1] == "1:1" and "no text" in prompts[0][0] and "vector-style logo" in prompts[0][0]
     assert prompts[1][1] == "16:9" and "dramatic" in prompts[1][0]
     assert "product photography" in prompts[2][0]
+
+
+async def test_intent_reply_is_nudged_and_fallback_keeps_first_build_rules(monkeypatch):
+    """"Let me build the pages." with no tool call is not an answer: the
+    model is told to go on (twice at most). And when the primary strikes
+    out, the fallback attempt still gets the first-build review."""
+    monkeypatch.setattr(settings, "BUILDER_COMPLETION_ROUNDS", 1)
+    monkeypatch.setattr(settings, "BUILDER_BUILD_MAX_STEPS", 6)
+    monkeypatch.setattr(settings, "BUILDER_TYPECHECK_STRIKES", 1)
+    model = ScriptedModel([
+        ("", [call("write_file", {"path": "src/App.tsx", "content": "bad"})]),   # primary: strike -> fallback
+        ("Good, the scaffolding is in place. Let me check the UI primitives, then build the pages.", []),
+        ("", [call("write_file", {"path": "src/pages/Shop.tsx", "content": "ok"}, "c2")]),
+        ("Done.", []),                                                          # -> completeness review
+        ("All pages present.", []),
+    ])
+    monkeypatch.setattr(code_llm, "stream_chat", model.stream_chat)
+    sb = FakeSandbox({"src/App.tsx": "x"})
+    sb.tsc_output = "src/App.tsx(1,1): error TS1005: bad"
+    runner = TurnRunner(sb, routing.BUILD, [], "build", spec_md="# Spec", project_id="p1", critique=False)
+
+    async def clean_after_fallback():
+        async for part in runner.run():
+            if part.get("type") == "data-notice" and part["data"]["reason"] == "typecheck_strikes":
+                sb.tsc_output = ""
+            yield part
+    parts = [p async for p in clean_after_fallback()]
+    models_used = [r["model"] for r in model.requests]
+    assert models_used[0] == "vendor/primary" and set(models_used[1:]) == {"vendor/fallback"}
+    nudge = model.requests[2]["messages"][-1]
+    assert nudge["role"] == "user" and nudge["content"].startswith("Go on and do it now")
+    assert "src/pages/Shop.tsx" in sb.files
+    assert runner.result.completion_rounds == 1 and runner.result.reason == loop.ANSWERED
+    assert any(p["type"] == "data-review" for p in parts)
+
+
+def test_intent_detector():
+    from app.builder.loop import _announces_more_work as f
+    assert f("The scaffolding is in place. Let me check the UI primitives, then build the pages.")
+    assert f("Now I'll wire the cart and the checkout.")
+    assert f("Next, I am going to add the admin page")
+    assert not f("You now have a shop with twelve pairs, a cart and an admin page.")
+    assert not f("The delete button works again.")
+    assert not f("")

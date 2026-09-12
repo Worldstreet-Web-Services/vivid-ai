@@ -127,3 +127,7 @@ async def test_usage_rollups(db, monkeypatch):
     assert mine["storage_bytes"] == 5700 and mine["model_calls"] == 2
     assert (await usage.rollup(db, user_id="nobody"))["model_calls"] == 0
     assert (await usage.rollup(db, project_id="p1", since=usage.days_ago(0)))["model_calls"] == 0
+
+
+def test_snapshot_excludes_git_and_uploads():
+    assert ".git" in snapshots.EXCLUDES and "public/uploads" in snapshots.EXCLUDES

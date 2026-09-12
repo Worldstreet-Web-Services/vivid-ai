@@ -178,7 +178,8 @@ def _cell(run: dict) -> str:
     imgs = "".join(
         f'<figure><img src="{html.escape(run["shots"].get(n) or "")}" alt="{n}"><figcaption>{n}</figcaption></figure>'
         for n in ("desktop", "mobile") if run["shots"].get(n))
-    link = f'<a href="{html.escape(run["url"])}">{html.escape(run["url"])}</a>' if run.get("url", "").startswith("http") else html.escape(run.get("url") or "")
+    url = run.get("url") or ""
+    link = f'<a href="{html.escape(url)}">{html.escape(url)}</a>' if url.startswith("http") else html.escape(url)
     return (f'<div class="run"><h3>{run["variant"].upper()}</h3>{imgs}'
             f'<p>{run["reason"]}, {run["steps"]} steps, critique rounds {run["critique_rounds"]}, '
             f'{run["seconds"]}s<br>{link}</p></div>')

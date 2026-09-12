@@ -24,7 +24,10 @@ log = logging.getLogger("vivid.builder.snapshots")
 #: already in the blob store as an asset and is synced back into a fresh
 #: sandbox. Keeping them out holds a snapshot at kilobytes, not megabytes,
 #: which is what a read over a flaky connection can finish.
-EXCLUDES = ("node_modules", "dist", ".vite", ".vivid-dev.log", "public/uploads")
+#: .git is left out as well: every snapshot is a version in its own right,
+#: and the repository's objects would carry every image ever generated.
+#: `restore` re-initialises git in the sandbox.
+EXCLUDES = ("node_modules", "dist", ".vite", ".vivid-dev.log", "public/uploads", ".git")
 _GIT_IDENTITY = "-c user.name=Vivid -c user.email=builder@vivid"
 
 
@@ -106,7 +109,9 @@ async def restore(sandbox: Sandbox, snapshot: BuilderSnapshot) -> None:
     before = await _package_hash(sandbox)
     result = await sandbox.run(
         "find . -mindepth 1 -maxdepth 1 ! -name node_modules -exec rm -rf {} + "
-        f"&& tar -xzf {tar} && rm -f {tar}", timeout=120)
+        f"&& tar -xzf {tar} && rm -f {tar} && ("
+        "[ -d .git ] || (git init -q -b main && git add -A "
+        f"&& git {_GIT_IDENTITY} commit -q -m 'restored'))", timeout=120)
     if not result.ok:
         raise SnapshotError(f"restore failed: {result.output[:300]}")
     after = await _package_hash(sandbox)
