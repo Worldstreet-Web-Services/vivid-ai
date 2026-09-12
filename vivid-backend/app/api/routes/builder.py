@@ -184,22 +184,22 @@ async def chat(project_id: str, body: ChatIn, request: Request,
                 log.error("sandbox for project %s failed: %s", project_id, e)
                 yield stream.frame(stream.error(
                     "The workspace could not be started. Please try again."))
-                yield stream.DONE
                 return
             runner = TurnRunner(sandbox, stage, history, body.text, spec_md, recent,
                                 cancelled=cancel.is_set)
             async for part in runner.run():
                 collector.add(part)
                 yield stream.frame(part)
-            yield stream.DONE
         except Exception as e:                     # never a half-open stream
             log.exception("builder turn failed for project %s", project_id)
             yield stream.frame(stream.error(provider.scrub(str(e))))
-            yield stream.DONE
         finally:
+            # Stored BEFORE the terminator: a client that fetches the thread
+            # the moment it sees [DONE] must find the assistant message.
             turns.finish(project_id)
             await manager.touch(project_id)
             await _persist_turn(project_id, collector, runner)
+            yield stream.DONE
 
     return StreamingResponse(generate(), media_type=stream.MEDIA_TYPE,
                              headers=stream.HEADERS)
