@@ -2,15 +2,16 @@
 
     python -m app.scripts.builder_eval                       # the configured slots
     python -m app.scripts.builder_eval --build anthropic/claude-sonnet-5
-    python -m app.scripts.builder_eval --only build --out eval.json
+    python -m app.scripts.builder_eval --only build --driver e2b --out eval.json
 
 Five build prompts on a fresh template and five edit prompts on top of a
 built app, each run as one turn on the local sandbox driver. Reports steps,
 typecheck failures, tokens, cost and whether the turn finished, per prompt
 and in total, and writes JSON so two runs can be diffed.
 
-Needs OPENROUTER_API_KEY and a template with node_modules installed
-(BUILDER_TEMPLATE_DIR). Runs against the real model: it costs money.
+Needs OPENROUTER_API_KEY and a sandbox: E2B_API_KEY with the template built
+(--driver e2b), or the template directory with node_modules installed
+(--driver local). Runs against the real model: it costs money.
 """
 import argparse
 import asyncio
@@ -20,7 +21,7 @@ import time
 
 from app.builder import loop, pricing, routing
 from app.builder.loop import TurnRunner
-from app.builder.sandbox.local import LocalSandbox
+from app.builder.sandbox.manager import manager
 from app.core.config import settings
 
 BUILD_PROMPTS = [
@@ -75,8 +76,7 @@ async def run_turn(sandbox, stage, text, history):
 async def build_suite(prompts):
     rows = []
     for i, text in enumerate(prompts):
-        sandbox = await LocalSandbox.create(settings.BUILDER_TEMPLATE_DIR,
-                                            settings.BUILDER_LOCAL_ROOT, f"eval-build-{i}")
+        sandbox = await manager.create_fresh(f"eval-build-{i}")
         try:
             row, _ = await run_turn(sandbox, routing.BUILD, text, [])
         finally:
@@ -87,8 +87,7 @@ async def build_suite(prompts):
 
 
 async def edit_suite(prompts):
-    sandbox = await LocalSandbox.create(settings.BUILDER_TEMPLATE_DIR,
-                                        settings.BUILDER_LOCAL_ROOT, "eval-edit")
+    sandbox = await manager.create_fresh("eval-edit")
     rows = []
     try:
         row, runner = await run_turn(sandbox, routing.BUILD, BUILD_PROMPTS[0], [])
@@ -136,8 +135,11 @@ async def main(args) -> int:
         settings.EDIT_MODEL = args.edit
     if args.fallback:
         settings.FALLBACK_MODEL = args.fallback
+    if args.driver:
+        settings.SANDBOX_DRIVER = args.driver
     print(f"build={settings.BUILD_MODEL} edit={settings.EDIT_MODEL} "
-          f"fallback={settings.FALLBACK_MODEL} max_steps={settings.BUILDER_MAX_STEPS}")
+          f"fallback={settings.FALLBACK_MODEL} max_steps={settings.BUILDER_MAX_STEPS} "
+          f"sandbox={settings.SANDBOX_DRIVER}")
 
     report = {"models": {"build": settings.BUILD_MODEL, "edit": settings.EDIT_MODEL,
                          "fallback": settings.FALLBACK_MODEL}}
@@ -164,6 +166,7 @@ if __name__ == "__main__":
     p.add_argument("--build", help="slug for BUILD_MODEL")
     p.add_argument("--edit", help="slug for EDIT_MODEL")
     p.add_argument("--fallback", help="slug for FALLBACK_MODEL")
+    p.add_argument("--driver", choices=["e2b", "local"], help="SANDBOX_DRIVER for the run")
     p.add_argument("--only", choices=["build", "edit"])
     p.add_argument("--n", type=int, default=5, help="prompts per suite")
     p.add_argument("--out", help="write the JSON report here")

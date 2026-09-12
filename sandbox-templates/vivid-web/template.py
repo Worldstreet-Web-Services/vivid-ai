@@ -2,9 +2,10 @@
 
     E2B_API_KEY=... python template.py
 
-Everything the sandbox needs is in this directory: the Vite project, the
-Dockerfile that installs it under /home/user/app, and start.sh, which the
-sandbox runs on boot. The template is ready when :5173 answers.
+Everything the sandbox needs is in this directory: the Vite project and
+start.sh, which the sandbox runs on boot. The build installs node_modules
+and makes the first git commit, so a sandbox boots straight into a working
+dev server; the template is ready when :5173 answers.
 
 Rebuild after changing package.json or any template file; running sandboxes
 keep the old image, new ones get the new one.
@@ -17,6 +18,12 @@ from e2b import Template, default_build_logger, wait_for_port
 
 HERE = Path(__file__).resolve().parent
 NAME = os.environ.get("E2B_TEMPLATE", "vivid-web")
+APP = "/home/user/app"
+
+#: Copied into the image. node_modules is installed there, never uploaded.
+FILES = ["package.json", "index.html", "vite.config.ts", "tsconfig.json",
+         "tsconfig.app.json", "tsconfig.node.json", "components.json",
+         ".gitignore", "start.sh"]
 
 
 def main() -> int:
@@ -26,9 +33,20 @@ def main() -> int:
     os.chdir(HERE)
     template = (
         Template()
-        .from_dockerfile("e2b.Dockerfile")
-        .set_workdir("/home/user/app")
-        .set_start_cmd("bash /home/user/app/start.sh", wait_for_port(5173))
+        .from_node_image("22")
+        # git for snapshots and file listing; bash for the tools' shell.
+        .run_cmd("apt-get update && apt-get install -y --no-install-recommends git bash "
+                 "&& rm -rf /var/lib/apt/lists/*")
+        .run_cmd("id user >/dev/null 2>&1 || useradd -m -u 1000 -s /bin/bash user")
+        .set_workdir(APP)
+        .copy(FILES, f"{APP}/", user="user")
+        .copy("src", f"{APP}/src", user="user")
+        .run_cmd(f"chown -R user:user {APP}")
+        .run_cmd("npm install --no-audit --no-fund", user="user")
+        .run_cmd("git init -q -b main && git config user.name Vivid "
+                 "&& git config user.email builder@vivid "
+                 "&& git add -A && git commit -q -m template", user="user")
+        .set_start_cmd(f"bash {APP}/start.sh", wait_for_port(5173))
     )
     info = Template.build(template, name=NAME, cpu_count=2, memory_mb=2048,
                           on_build_logs=default_build_logger())

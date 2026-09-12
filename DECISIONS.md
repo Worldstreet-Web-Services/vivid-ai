@@ -156,15 +156,16 @@ Template source lives in `sandbox-templates/vivid-web/` at the repo root
 10. **Secrets at rest** use Fernet (`SECRETS_ENCRYPTION_KEY`, 32 url-safe
     base64 bytes). Tool results and the stream never carry a secret value;
     `set_secret` echoes only the key name.
-11. **Eval** is `python -m app.scripts.builder_eval --slot build=<slug>`,
+11. **Eval** is `python -m app.scripts.builder_eval --build <slug> --driver e2b|local`,
     reports steps, typecheck failures, tokens and cost per prompt, and writes
     a JSON file so two runs can be diffed.
 
 ## 5. Open questions (answered by assumption until told otherwise)
 
-1. E2B account: no `E2B_API_KEY` is present locally. Assumed: the key arrives
-   later; phase 1 is proven on the `local` driver and the E2B driver is
-   written against the SDK source, then verified when a key exists.
+1. E2B account: a key was provided on 2026-09-12 and lives in the backend's
+   untracked `.env`. The `vivid-web` template is built from
+   `sandbox-templates/vivid-web/template.py` (Template SDK, fluent API, since
+   the Dockerfile route was not needed); phase 1 is proven on E2B.
 2. R2 credentials: none present. Assumed: MinIO in dev (the existing S3
    settings), R2 in production via `R2_*` settings.
 3. Plan-mode answers: the `ask_user` questions are persisted as a tool part;

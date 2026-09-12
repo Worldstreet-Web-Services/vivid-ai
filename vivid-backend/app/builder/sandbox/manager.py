@@ -136,6 +136,17 @@ class SandboxManager:
             await self._forget(redis, project_id)
         return sandbox
 
+    async def create_fresh(self, project_id: str) -> Sandbox:
+        """A new sandbox from the template, not registered with the manager:
+        the caller owns it and kills it. For the eval script and tests."""
+        sandbox = await self._create(project_id)
+        try:
+            await self._wait_for_dev_server(sandbox)
+        except Exception:
+            await sandbox.kill()
+            raise
+        return sandbox
+
     async def _create(self, project_id: str) -> Sandbox:
         driver = settings.SANDBOX_DRIVER
         if driver == "e2b":
