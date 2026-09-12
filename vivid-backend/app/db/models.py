@@ -261,6 +261,8 @@ class BuilderProject(Base):
     #: plan | build. New projects plan first; `POST .../build` moves them on.
     #: Rows from before plan mode existed default to build (see init_db).
     mode: Mapped[str] = mapped_column(String(8), default="plan")
+    #: The brief the prompt builder wrote from the first message.
+    brief_md: Mapped[str | None] = mapped_column(Text, default=None)
     #: spec.md as agreed in plan mode; injected into every turn.
     spec_md: Mapped[str | None] = mapped_column(Text, default=None)
     #: The snapshot the preview is on. Plain string, not an FK: the row is
@@ -269,6 +271,8 @@ class BuilderProject(Base):
     #: none | byo | cloud
     backend_mode: Mapped[str] = mapped_column(String(8), default="none")
     supabase_project_ref: Mapped[str | None] = mapped_column(String(64), default=None)
+    #: none | paystack. The user's connector supplies the keys.
+    payments_provider: Mapped[str] = mapped_column(String(16), default="none")
     published_url: Mapped[str | None] = mapped_column(String(512), default=None)
     #: Files touched in the last two turns, newest turn first, for the
     #: context block. A list of lists of project-relative paths.

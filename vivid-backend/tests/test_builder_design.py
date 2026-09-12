@@ -27,7 +27,7 @@ def env(monkeypatch):
 
 
 def test_recipe_routing_and_block():
-    assert skills.available() == ["copy", "design"]
+    assert skills.available() == ["copy", "design", "payments"]
     assert skills.recipe_for("an ecommerce website for my sneakers") == "shop"
     assert skills.recipe_for("a booking app for my salon") == "booking"
     assert skills.recipe_for("landing page for a bakery") == "landing"
@@ -48,7 +48,7 @@ def test_skill_can_be_turned_off(monkeypatch):
 
 
 def test_copy_skill_rides_with_the_design_skill():
-    assert skills.available() == ["copy", "design"]
+    assert skills.available() == ["copy", "design", "payments"]
     block = skills.ui_block("# Spec\nA salon booking app", "")
     assert "## Design skill" in block and "## Copy skill" in block
     assert block.index("## Design skill") < block.index("## Copy skill")
@@ -264,3 +264,10 @@ async def test_capture_reads_the_page_report_and_broken_pages_lead_the_brief(mon
 
 async def _noop_put(key, data, content_type="application/gzip"):
     return None
+
+
+def test_payments_skill_only_when_enabled():
+    assert skills.payments_block(None) == "" and skills.payments_block("none") == ""
+    block = skills.ui_block("shop", "", payments="paystack")
+    assert "## Payments skill" in block and "kobo" in block and "x-paystack-signature" in block
+    assert "## Payments skill" not in skills.ui_block("shop", "")

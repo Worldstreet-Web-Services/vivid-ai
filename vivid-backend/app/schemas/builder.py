@@ -20,10 +20,12 @@ class ProjectOut(BaseModel):
     id: str
     name: str
     mode: str
+    brief_md: str | None = None
     spec_md: str | None
     current_snapshot_id: str | None
     backend_mode: str
     supabase_project_ref: str | None
+    payments_provider: str = "none"
     published_url: str | None
     created_at: datetime
     updated_at: datetime

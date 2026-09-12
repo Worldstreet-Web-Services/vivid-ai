@@ -56,6 +56,7 @@ Parts, in the order a turn produces them:
 {"type":"data-notice","data":{"text":"The model connection dropped; retrying.","reason":"stream_retry","attempt":1}}
 {"type":"data-notice","data":{"text":"Retrying with a different model.","reason":"step_limit"}}
 {"type":"data-usage","data":{"model":"...","steps":7,"tokens_in":..,"tokens_out":..,"reason":"answered"}}
+{"type":"data-brief","data":{"markdown":"..."}}      plan mode, first message: the expanded brief
 {"type":"data-review","data":{"kind":"completeness","round":1}}   first builds: the spec check
 {"type":"data-critique","data":{"round":1,"broken":false,"screenshots":[{"name":"desktop","width":1280,"url":"..."},{"name":"mobile","width":390,"url":"..."}]}}   broken: the page crashed or rendered nothing; the model fixes that first
 {"type":"data-snapshot","data":{"id":"...","seq":3}}   after finish, when the turn changed files
@@ -205,6 +206,39 @@ table, and keep the service key inside edge functions.
 OAuth tokens expire; the refresh token is stored with the connector and
 renewed before use. Connector tokens (GitHub too) are encrypted at rest with
 `SECRETS_ENCRYPTION_KEY`; rows written before that stay readable.
+
+## Payments (Paystack)
+
+The user connects their own Paystack account once, as a connector:
+
+```
+POST /v1/connectors {provider: "paystack", token: "sk_...", public_key: "pk_..."}
+POST   /v1/builder/projects/{id}/payments   -> project (payments_provider: paystack)
+DELETE /v1/builder/projects/{id}/payments
+```
+
+Both keys must be test or both live; the secret is verified against
+Paystack and stored encrypted. Enabling payments on a project puts the
+public key into the app's `.env` as `VITE_PAYSTACK_PUBLIC_KEY` and attaches
+the payments skill to every UI turn. With a Supabase backend linked, the
+secret key is also stored in that project's edge-function secrets, so the
+model builds the verified flow: a pending order row, Paystack's inline
+checkout with the order id as reference, a webhook edge function that
+checks the signature and marks the order paid. Without a backend the skill
+uses the inline checkout only. Amounts are kobo; money goes to the user's
+Paystack balance, never through Vivid. The template ships
+`@paystack/inline-js`.
+
+## The prompt builder
+
+A project's first message is usually one line. Before any question is
+asked, plan mode runs it through a meta-prompt that writes a full brief:
+what it is, who it is for, pages and flows, data, content and pictures
+needed, look and feel with two alternatives, and assumptions to confirm.
+The brief streams as ordinary text, is carried as a `data-brief` part, is
+stored on the project (`brief_md`), and the planner's questions and spec
+build on it. Reference images on that first message go to the meta-prompt
+too. Later turns skip it.
 
 ## Publishing
 

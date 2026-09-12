@@ -358,11 +358,13 @@ def test_plan_mode_then_build(client, monkeypatch, fake_manager):
     async def stream_chat(messages, tools, max_tokens=None, endpoint=None, temperature=None):
         names = [t["function"]["name"] for t in tools]
         seen.append((names, endpoint.model, messages[0]["content"]))
-        if "ask_user" in names and len(seen) == 1:
+        if not names:                                   # the prompt builder's brief
+            yield {"type": "token", "text": "## What it is\nA salon booking app."}
+        elif "ask_user" in names and len(seen) == 2:
             yield {"type": "tool_calls", "calls": [
                 {"id": "c1", "name": "ask_user", "error": None,
                  "arguments": {"questions": QUESTIONS}}]}
-        elif "ask_user" in names and len(seen) == 2:
+        elif "ask_user" in names and len(seen) == 3:
             yield {"type": "tool_calls", "calls": [
                 {"id": "c2", "name": "write_spec", "error": None, "arguments": {"markdown": SPEC}}]}
         elif "ask_user" in names:
@@ -381,8 +383,10 @@ def test_plan_mode_then_build(client, monkeypatch, fake_manager):
                                   json={"text": "a booking app for my salon"}).text)
     kinds = [p["type"] for p in parts if isinstance(p, dict)]
     assert "tool-input-available" in kinds and parts[-1] == "[DONE]"
+    assert "data-brief" in kinds
     assert fake_manager.fresh                                    # no sandbox was started
-    assert seen[0][0] == ["ask_user", "write_spec"] and seen[0][1] == "vendor/planner"
+    assert seen[0][0] == [] and seen[1][0] == ["ask_user", "write_spec"] and seen[1][1] == "vendor/planner"
+    assert client.get(f"/v1/builder/projects/{pid}").json()["brief_md"].startswith("## What it is")
 
     parts = sse_parts(client.post(f"/v1/builder/projects/{pid}/chat",
                                   json={"text": "Both. Yes.", "images": ["data:image/png;base64,AA"]}).text)
@@ -404,7 +408,7 @@ def test_plan_mode_then_build(client, monkeypatch, fake_manager):
     assert fake_manager.sandbox.files["spec.md"] == edited       # and written to the sandbox
     assert not fake_manager.fresh
     u = client.get(f"/v1/builder/projects/{pid}/usage").json()
-    assert u["model_calls"] == 4                                 # three plan calls + one build call
+    assert u["model_calls"] == 5                                 # brief + three plan calls + one build call
 
 
 def test_skip_plan_starts_in_build_mode(client, monkeypatch, fake_manager):
@@ -631,12 +635,14 @@ def test_assets_upload_list_delete_and_prompting(client, monkeypatch, fake_manag
         yield {"type": "done", "finish_reason": "stop", "usage": None}
     monkeypatch.setattr(code_llm, "stream_chat", stream_chat)
 
-    # Plan turn: the list is in the prompt and the image goes along as a picture.
+    # Plan turn: the list is in the prompt and the image goes along as a
+    # picture, both to the prompt builder and to the planner.
     client.post(f"/v1/builder/projects/{pid}/chat", json={"text": "a sneaker shop"})
     assert "/uploads/air-max-90.png (image/png" in seen[-1][0]["content"]
     assert "logo, product photos" in seen[-1][0]["content"]
-    user = seen[-1][-1]["content"]
-    assert user[1]["type"] == "image_url" and user[1]["image_url"]["url"].startswith("https://r2/")
+    with_images = [m for m in seen[-1] if isinstance(m.get("content"), list)]
+    assert with_images and with_images[0]["content"][1]["type"] == "image_url"
+    assert with_images[0]["content"][1]["image_url"]["url"].startswith("https://r2/")
 
     # Build turn: the list is in the prompt.
     client.post(f"/v1/builder/projects/{pid}/build")
@@ -665,3 +671,70 @@ def test_manual_snapshot(client, monkeypatch, fake_manager, fake_blob):
     r = client.post(f"/v1/builder/projects/{pid}/snapshots")
     assert r.status_code == 200 and r.json()["seq"] == 1
     assert len(client.get(f"/v1/builder/projects/{pid}/snapshots").json()) == 1
+
+
+def test_paystack_connector_and_payments(client, maker, monkeypatch, fake_manager):
+    """Connect Paystack (keys verified), enable payments on a project: the
+    public key lands in .env, the skill rides in the prompt, and with a
+    Supabase backend the secret key is pushed to the edge-function secrets."""
+    import asyncio
+    from cryptography.fernet import Fernet
+    from app.api.routes.connectors import router as connectors_router
+    from app.builder import supabase as sb_mod
+    from app.db.models import Connector
+    from app.services.connectors import paystack, tokens
+    from tests.test_builder_supabase import StubAPI
+
+    monkeypatch.setattr(settings, "SECRETS_ENCRYPTION_KEY", Fernet.generate_key().decode())
+    client.app.include_router(connectors_router, prefix="/v1")
+
+    class Resp:
+        def __init__(self, status): self.status_code = status
+    class FakeHTTP:
+        async def get(self, url, params=None, headers=None, timeout=None):
+            assert url.endswith("/transaction") and headers["Authorization"].startswith("Bearer sk_test_")
+            return Resp(200)
+    monkeypatch.setattr(paystack.http, "client", lambda: FakeHTTP())
+
+    r = client.post("/v1/connectors", json={"provider": "paystack", "token": "sk_test_" + "a" * 30})
+    assert r.status_code == 422 and "public key" in r.json()["detail"]
+    r = client.post("/v1/connectors", json={"provider": "paystack", "token": "sk_test_" + "a" * 30,
+                                            "public_key": "pk_live_" + "b" * 30})
+    assert r.status_code == 422 and "both" in r.json()["detail"]
+    r = client.post("/v1/connectors", json={"provider": "paystack", "token": "sk_test_" + "a" * 30,
+                                            "public_key": "pk_test_" + "b" * 30})
+    assert r.status_code == 201 and r.json()["mode"] == "test"
+
+    seen = []
+    async def stream_chat(messages, tools, max_tokens=None, endpoint=None, temperature=None):
+        seen.append(messages[0]["content"])
+        yield {"type": "token", "text": "ok"}
+        yield {"type": "done", "finish_reason": "stop", "usage": None}
+    monkeypatch.setattr(code_llm, "stream_chat", stream_chat)
+
+    pid = client.post("/v1/builder/projects", json={"skip_plan": True}).json()["id"]
+    r = client.post(f"/v1/builder/projects/{pid}/payments")
+    assert r.status_code == 200 and r.json()["payments_provider"] == "paystack"
+    client.post(f"/v1/builder/projects/{pid}/chat", json={"text": "add checkout"})
+    assert fake_manager.sandbox.files[".env"] == "VITE_PAYSTACK_PUBLIC_KEY=pk_test_" + "b" * 30 + "\n"
+    assert "## Payments skill" in seen[-1] and "kobo" in seen[-1]
+
+    # With a Supabase backend, the secret key goes to the edge-function secrets.
+    from app.builder import tools as tools_mod
+    monkeypatch.setattr(sb_mod, "Management", StubAPI)
+    monkeypatch.setattr(tools_mod, "Management", StubAPI)
+    StubAPI.calls = []
+    async def add_sb():
+        async with maker() as db:
+            db.add(Connector(user_id="u1", provider="supabase", name="supabase (Acme)",
+                             token=tokens.store("sbp_tok"), config_json={"mode": "authenticated"}))
+            await db.commit()
+    asyncio.run(add_sb())
+    client.post(f"/v1/builder/projects/{pid}/supabase", json={"project_ref": "refone"})
+    client.post(f"/v1/builder/projects/{pid}/payments")
+    assert ("secrets", "refone", {"PAYSTACK_SECRET_KEY": "sk_test_" + "a" * 30}) in StubAPI.calls
+
+    r = client.delete(f"/v1/builder/projects/{pid}/payments")
+    assert r.json()["payments_provider"] == "none"
+    client.post(f"/v1/builder/projects/{pid}/chat", json={"text": "again"})
+    assert "## Payments skill" not in seen[-1] and "VITE_PAYSTACK_PUBLIC_KEY" not in fake_manager.sandbox.files[".env"]

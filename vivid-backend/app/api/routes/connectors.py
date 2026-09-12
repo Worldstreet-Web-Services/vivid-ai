@@ -28,6 +28,8 @@ class ConnectorCreate(BaseModel):
     token: str = ""  # personal access token; empty = public mode
     username: str | None = Field(default=None, max_length=100)
     name: str | None = Field(default=None, max_length=128)
+    #: Paystack: the public key that goes into the app; never secret.
+    public_key: str | None = Field(default=None, max_length=120)
 
 
 class ConnectorOut(BaseModel):
@@ -65,7 +67,8 @@ async def add_connector(body: ConnectorCreate,
         raise HTTPException(status_code=400,
                             detail=f"unknown provider; available: {sorted(PROVIDERS)}")
     try:
-        info = await provider.verify(body.token, {"username": body.username})
+        info = await provider.verify(body.token, {"username": body.username,
+                                                  "public_key": body.public_key})
     except Exception as e:
         raise HTTPException(status_code=422,
                             detail=f"could not verify {body.provider} credentials: {e}")

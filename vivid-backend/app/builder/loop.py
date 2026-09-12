@@ -150,9 +150,12 @@ class TurnRunner:
                  keepalive: Callable[[], Awaitable[None]] | None = None,
                  project_id: str = "",
                  critique: bool | None = None,
-                 images=None) -> None:
+                 images=None,
+                 payments: str | None = None) -> None:
         self.sandbox = sandbox
         self.backend = backend
+        #: "paystack" when the project takes payments; adds the skill.
+        self.payments = payments
         #: An ImageMaker when the image model is configured; the model may
         #: make pictures for a project with no uploads.
         self.images = images
@@ -222,7 +225,8 @@ class TurnRunner:
                      "content": prompt.system_prompt(
                          self.spec_md, block, backend=self.backend is not None,
                          assets_block=self.assets_block,
-                         skill_block=skills.ui_block(self.spec_md, self.user_text))}]
+                         skill_block=skills.ui_block(self.spec_md, self.user_text,
+                                                    payments=self.payments))}]
         messages += self.history
         messages.append({"role": "user", "content": self.user_text})
 

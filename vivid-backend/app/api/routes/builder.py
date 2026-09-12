@@ -22,6 +22,8 @@
     GET    /builder/projects/{id}/usage      this project's metered totals
     POST   /builder/projects/{id}/supabase   link a Supabase project (byo)
     DELETE /builder/projects/{id}/supabase   unlink
+    POST   /builder/projects/{id}/payments   take payments with the user's Paystack
+    DELETE /builder/projects/{id}/payments   stop
     POST   /builder/projects/{id}/assets     upload a logo, photo, font (multipart)
     GET    /builder/projects/{id}/assets
     DELETE /builder/projects/{id}/assets/{asset_id}
@@ -53,6 +55,7 @@ from app.core.errors import APIError
 from app.db.models import (BuilderAsset, BuilderMessage, BuilderProject, BuilderPublish,
                            BuilderSnapshot, Connector, User)
 from app.services.connectors import supabase as supabase_connector
+from app.services.connectors import tokens as connector_tokens
 from app.db.session import async_session
 from app.schemas.builder import (AssetOut, CancelOut, ChatIn, FileOut, FilesOut, MessageOut,
                                  PreviewOut, ProjectCreate, ProjectOut, ProjectUpdate,
@@ -200,6 +203,7 @@ async def chat(project_id: str, body: ChatIn, request: Request,
     await db.commit()
 
     spec_md, recent = project.spec_md, _recent(project)
+    payments = project.payments_provider if project.payments_provider != "none" else None
     backend = None if planning_mode else await _backend_for(project, user, db)
     env_vars = None if planning_mode else await _env_for(project, db)
     uploaded = await assets.list_for(db, project_id)
@@ -236,7 +240,7 @@ async def chat(project_id: str, body: ChatIn, request: Request,
                 return
             runner = TurnRunner(sandbox, stage, history, body.text, spec_md, recent,
                                 cancelled=cancel.is_set, backend=backend,
-                                assets_block=assets_block,
+                                assets_block=assets_block, payments=payments,
                                 keepalive=lambda: manager.touch(project_id),
                                 project_id=project_id,
                                 images=(images.ImageMaker(
@@ -316,6 +320,8 @@ async def _persist_plan_turn(project_id: str, collector: stream.PartsCollector,
                                   parts=collector.parts, model=runner.result.model))
             if runner.result.spec_md:
                 project.spec_md = runner.result.spec_md
+            if runner.result.brief_md:
+                project.brief_md = runner.result.brief_md
             await usage.record_model(db, project_id, [
                 ModelCall(model, routing.PLAN, u) for model, u in runner.result.calls])
             await db.commit()
@@ -353,13 +359,19 @@ async def _sync_env(sandbox, env_vars: dict[str, str] | None) -> None:
 
 
 async def _env_for(project: BuilderProject, db: AsyncSession) -> dict[str, str] | None:
-    if project.backend_mode == "none":
-        return None
-    url = await secrets.get_secret(db, project.id, "SUPABASE_URL")
-    anon = await secrets.get_secret(db, project.id, "SUPABASE_ANON_KEY")
-    if not (url and anon):
-        return None
-    return {"VITE_SUPABASE_URL": url, "VITE_SUPABASE_ANON_KEY": anon}
+    """The app's .env: the backend's URL and publishable key, and the
+    payments public key. Only values safe in a browser."""
+    env: dict[str, str] = {}
+    if project.backend_mode != "none":
+        url = await secrets.get_secret(db, project.id, "SUPABASE_URL")
+        anon = await secrets.get_secret(db, project.id, "SUPABASE_ANON_KEY")
+        if url and anon:
+            env.update({"VITE_SUPABASE_URL": url, "VITE_SUPABASE_ANON_KEY": anon})
+    if project.payments_provider == "paystack":
+        public = await secrets.get_secret(db, project.id, "PAYSTACK_PUBLIC_KEY")
+        if public:
+            env["VITE_PAYSTACK_PUBLIC_KEY"] = public
+    return env or None
 
 
 async def _supabase_connector(user_id: str, db: AsyncSession) -> Connector | None:
@@ -428,6 +440,54 @@ async def link_supabase(project_id: str, body: SupabaseLinkIn, request: Request,
     sandbox = manager.peek(project_id)
     if sandbox is not None:
         await _sync_env(sandbox, {"VITE_SUPABASE_URL": url, "VITE_SUPABASE_ANON_KEY": anon})
+    return project
+
+
+# -------------------------------------------------------------- payments
+async def _paystack_connector(user_id: str, db: AsyncSession) -> Connector | None:
+    return (await db.execute(
+        select(Connector).where(Connector.user_id == user_id,
+                                Connector.provider == "paystack"))).scalar_one_or_none()
+
+
+@router.post("/projects/{project_id}/payments", response_model=ProjectOut)
+async def enable_payments(project_id: str, user: User = Depends(get_current_user),
+                          db: AsyncSession = Depends(get_db)):
+    """Take payments with the user's connected Paystack account. The public
+    key goes into the app's .env; with a Supabase backend the secret key
+    goes into that project's edge-function secrets, never into the app."""
+    project = await _owned(project_id, user, db)
+    if not secrets.configured():
+        raise APIError(503, "not_configured", "Secrets storage is not configured.")
+    connector = await _paystack_connector(user.id, db)
+    if connector is None:
+        raise APIError(400, "bad_request", "Connect a Paystack account first.")
+    public = (connector.config_json or {}).get("public_key")
+    if not public:
+        raise APIError(400, "bad_request", "The Paystack connector has no public key.")
+    await secrets.set_secret(db, project_id, "PAYSTACK_PUBLIC_KEY", public)
+    project.payments_provider = "paystack"
+    await db.commit()
+    backend = await _backend_for(project, user, db)
+    if backend is not None:
+        try:
+            await backend.api.set_secrets(
+                backend.ref, {"PAYSTACK_SECRET_KEY": connector_tokens.read(connector.token)})
+        except supabase.SupabaseError as e:
+            log.warning("could not set PAYSTACK_SECRET_KEY on %s: %s", backend.ref, e.public)
+    sandbox = manager.peek(project_id)
+    if sandbox is not None:
+        await _sync_env(sandbox, await _env_for(project, db))
+    return project
+
+
+@router.delete("/projects/{project_id}/payments", response_model=ProjectOut)
+async def disable_payments(project_id: str, user: User = Depends(get_current_user),
+                           db: AsyncSession = Depends(get_db)):
+    project = await _owned(project_id, user, db)
+    project.payments_provider = "none"
+    await secrets.delete_secret(db, project_id, "PAYSTACK_PUBLIC_KEY")
+    await db.commit()
     return project
 
 

@@ -93,11 +93,21 @@ def copy_block() -> str:
     return "## Copy skill\n" + text if text else ""
 
 
-def ui_block(spec_md: str | None, user_text: str = "") -> str:
-    """Everything a UI turn gets: the design skill with its recipe, then the
-    copy skill. Order matters little to the model; the design skill is
-    first because the recipe names the sections the copy then fills."""
-    return "\n\n".join(b for b in (design_block(spec_md, user_text), copy_block()) if b)
+def payments_block(provider: str | None) -> str:
+    """The payments skill, when the project takes payments."""
+    if not provider or provider == "none":
+        return ""
+    text = _read(f"payments/SKILL.md")
+    return "## Payments skill\n" + text if text else ""
+
+
+def ui_block(spec_md: str | None, user_text: str = "",
+             payments: str | None = None) -> str:
+    """Everything a UI turn gets: the design skill with its recipe, the copy
+    skill, and the payments skill when payments are enabled. The design
+    skill is first because the recipe names the sections the copy fills."""
+    blocks = (design_block(spec_md, user_text), copy_block(), payments_block(payments))
+    return "\n\n".join(b for b in blocks if b)
 
 
 def available() -> list[str]:

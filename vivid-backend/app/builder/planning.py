@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from typing import AsyncIterator, Callable
 
 from app.builder import routing, stream
+from app.builder import meta
 from app.builder.loop import ModelStep
 
 log = logging.getLogger("vivid.builder.planning")
@@ -118,6 +119,8 @@ class PlanResult:
     model: str = ""
     spec_md: str | None = None
     questions: list[dict] | None = None
+    #: The expanded brief from the first turn's meta-prompt.
+    brief_md: str | None = None
     calls: list = field(default_factory=list)
 
 
@@ -174,6 +177,10 @@ def history_from_parts(messages: list) -> list[dict]:
                 md = (p.get("input") or {}).get("markdown")
                 if md:
                     chunks.append("I wrote this spec:\n" + md)
+            elif kind == "data-brief":
+                md = (p.get("data") or {}).get("markdown")
+                if md:
+                    chunks.append("Here is how I understand the idea:\n\n" + md)
         text = "\n".join(chunks).strip()
         if text:
             out.append({"role": m.role, "content": text})
@@ -195,9 +202,12 @@ class PlanRunner:
                  images: list[str] | None = None,
                  cancelled: Callable[[], bool] = lambda: False,
                  message_id: str | None = None,
-                 assets_block: str = "") -> None:
+                 assets_block: str = "",
+                 brief: bool = True) -> None:
         self.history = history
         self.assets_block = assets_block
+        #: Run the prompt builder on a project's first message.
+        self.brief = brief
         self.user_text = user_text
         self.images = images
         self.cancelled = cancelled
@@ -211,7 +221,31 @@ class PlanRunner:
         system = SYSTEM + ("\n" + self.assets_block if self.assets_block else "")
         messages = [{"role": "system", "content": system}]
         messages += self.history
-        messages.append({"role": "user", "content": user_content(self.user_text, self.images)})
+
+        if self.brief and meta.needs_brief(self.history, self.user_text):
+            # The prompt builder: the one-liner becomes a brief first. It is
+            # streamed as ordinary text (the user reads it), kept as a
+            # data-brief part for clients that show it as a card, and
+            # handed to the planner as what was understood.
+            yield stream.start_step()
+            expansion = meta.Expansion(self.user_text, self.images)
+            async for part in expansion.run():
+                yield part
+            yield stream.finish_step()
+            if expansion.text:
+                self.result.brief_md = expansion.text
+                self.result.calls.append((endpoint.model, expansion.usage))
+                yield stream.data("brief", {"markdown": expansion.text})
+                messages.append({"role": "user", "content": user_content(self.user_text, self.images)})
+                messages.append({"role": "assistant",
+                                 "content": "Here is how I understand the idea:\n\n" + expansion.text})
+                messages.append({"role": "user", "content": (
+                    "Good. Now ask me only what changes what you would build, using ask_user; "
+                    "take the brief's defaults for the rest.")})
+            else:
+                messages.append({"role": "user", "content": user_content(self.user_text, self.images)})
+        else:
+            messages.append({"role": "user", "content": user_content(self.user_text, self.images)})
 
         for _ in range(MAX_STEPS):
             if self.cancelled():

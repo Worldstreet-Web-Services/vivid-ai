@@ -403,3 +403,19 @@ path in the code exists (a card showing alt text was seen on the sneaker
 site) and that the copy passes the skill's checks. Other skills in that
 repository worth a later look: better-typography, better-colors,
 page-cro, pricing-page, seo-audit, schema-markup.
+
+## 13. Payments and the prompt builder (2026-09-12)
+
+- **Paystack is a connector**, same shape as Supabase: the user's own keys,
+  verified, secret encrypted, public key in the app's `.env`. Per project:
+  `payments_provider`. No OAuth exists at Paystack, so keys are pasted. The
+  verified flow (order row, inline checkout, signed webhook edge function)
+  needs a Supabase backend and is written in `skills/payments/SKILL.md`;
+  the inline-only flow works with no backend for owners who accept an
+  unverified confirmation. Vivid never holds funds; a Vivid-run Paystack
+  subaccount model is a later business decision.
+- **Prompt builder**: the first message of a new project is expanded by a
+  meta-prompt into a brief (`app/builder/meta.py`) before the planner asks
+  anything. Users cannot write a brief; the builder can, and marks its
+  assumptions so the questions are about the things that matter. Stored as
+  `brief_md`; the planner's history carries it on later turns.

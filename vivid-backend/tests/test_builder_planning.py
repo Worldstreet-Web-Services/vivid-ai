@@ -76,7 +76,7 @@ async def collect(runner):
 async def test_ask_user_ends_the_turn(monkeypatch):
     m = install(monkeypatch, [("A few questions first.", [call("ask_user", {"questions": QUESTIONS})]),
                               ("should not run", [])])
-    runner = PlanRunner([], "a booking app for my salon")
+    runner = PlanRunner([], "a booking app for my salon", brief=False)
     parts, c = await collect(runner)
     assert runner.result.reason == planning.ASKED and runner.result.steps == 1
     assert runner.result.model == "vendor/planner"
@@ -97,7 +97,8 @@ async def test_bad_questions_are_sent_back_then_spec_written(monkeypatch):
         ("The spec covers booking and sign-in. Edit it or start the build.", []),
     ])
     runner = PlanRunner([{"role": "user", "content": "salon app"},
-                         {"role": "assistant", "content": "I asked: ..."}], "Customers. Yes.")
+                         {"role": "assistant", "content": "I asked: ..."}], "Customers. Yes.",
+                        brief=False)
     parts, c = await collect(runner)
     assert runner.result.reason == planning.SPEC_WRITTEN
     assert runner.result.spec_md == SPEC.strip()
@@ -111,7 +112,7 @@ async def test_bad_questions_are_sent_back_then_spec_written(monkeypatch):
 
 async def test_images_become_image_parts(monkeypatch):
     m = install(monkeypatch, [("noted", [])])
-    runner = PlanRunner([], "like this", images=["data:image/png;base64,AAAA"])
+    runner = PlanRunner([], "like this", images=["data:image/png;base64,AAAA"], brief=False)
     await collect(runner)
     user = m.requests[0]["messages"][-1]["content"]
     assert user[0] == {"type": "text", "text": "like this"}
@@ -121,7 +122,7 @@ async def test_images_become_image_parts(monkeypatch):
 async def test_step_limit_and_model_failure(monkeypatch):
     install(monkeypatch, [("", [call("write_spec", {"markdown": "x"}, f"c{i}")])
                           for i in range(10)])
-    runner = PlanRunner([], "go")
+    runner = PlanRunner([], "go", brief=False)
     await collect(runner)
     assert runner.result.reason == planning.STEP_LIMIT and runner.result.steps == planning.MAX_STEPS
 
@@ -129,7 +130,7 @@ async def test_step_limit_and_model_failure(monkeypatch):
         raise code_llm.CodeLLMUnavailable("down")
         yield
     monkeypatch.setattr(code_llm, "stream_chat", broken)
-    runner = PlanRunner([], "go")
+    runner = PlanRunner([], "go", brief=False)
     parts, _ = await collect(runner)
     assert runner.result.reason == planning.ERROR
     assert any(p["type"] == "error" for p in parts)
@@ -161,3 +162,39 @@ def test_validators():
     assert "missing these headings: Integrations" in planning.validate_spec(
         SPEC.replace("## Integrations\nSupabase auth.\n", ""))[1]
     assert routing.endpoint_for(routing.PLAN).model == "vendor/planner"
+
+
+async def test_first_message_goes_through_the_prompt_builder(monkeypatch):
+    """A one-liner is expanded into a brief first (no tools), streamed as
+    text and a data-brief part; the planner then asks from the brief."""
+    from app.builder import meta
+    m = install(monkeypatch, [
+        ("## What it is\nA sneaker shop in Lagos...\n## Assumptions to confirm\n- Sizes UK 6-12?", []),
+        ("Two questions.", [call("ask_user", {"questions": QUESTIONS})]),
+    ])
+    runner = PlanRunner([], "an ecommerce site for my sneakers")
+    parts, c = await collect(runner)
+    assert m.requests[0]["tools"] == [] and m.requests[0]["messages"][0]["content"] == meta.META_PROMPT
+    assert m.requests[1]["tools"] == ["ask_user", "write_spec"]
+    planner_msgs = m.requests[1]["messages"]
+    assert planner_msgs[-2]["role"] == "assistant" and "How I understand the idea" in planner_msgs[-2]["content"] or "understand the idea" in planner_msgs[-2]["content"]
+    assert planner_msgs[-1]["role"] == "user" and "ask_user" in planner_msgs[-1]["content"]
+    assert runner.result.brief_md.startswith("## What it is")
+    kinds = [p["type"] for p in parts if p["type"].startswith("data-")]
+    assert kinds[0] == "data-brief"
+    assert runner.result.reason == planning.ASKED
+    assert c.text().startswith("## What it is")
+    # A second turn (answers) does not expand again.
+    m2 = install(monkeypatch, [("", [call("write_spec", {"markdown": SPEC})]), ("done", [])])
+    runner = PlanRunner([{"role": "user", "content": "x"}, {"role": "assistant", "content": "y"}], "Both. Yes.")
+    await collect(runner)
+    assert m2.requests[0]["tools"] == ["ask_user", "write_spec"]
+
+
+def test_history_keeps_the_brief():
+    class M:
+        def __init__(self, role, parts):
+            self.role, self.parts = role, parts
+    h = planning.history_from_parts([M("assistant", [{"type": "text", "text": "## What it is"},
+                                                      {"type": "data-brief", "data": {"markdown": "## What it is\nshop"}}])])
+    assert "Here is how I understand the idea" in h[0]["content"]
