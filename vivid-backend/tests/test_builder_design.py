@@ -27,7 +27,7 @@ def env(monkeypatch):
 
 
 def test_recipe_routing_and_block():
-    assert skills.available() == ["design"]
+    assert skills.available() == ["copy", "design"]
     assert skills.recipe_for("an ecommerce website for my sneakers") == "shop"
     assert skills.recipe_for("a booking app for my salon") == "booking"
     assert skills.recipe_for("landing page for a bakery") == "landing"
