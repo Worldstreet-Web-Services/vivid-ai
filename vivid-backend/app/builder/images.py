@@ -22,6 +22,21 @@ log = logging.getLogger("vivid.builder.images")
 
 ASPECTS = {"square": "1:1", "landscape": "4:3", "wide": "16:9", "portrait": "3:4"}
 
+#: What gets added to the model's prompt per kind. Photos are the default.
+#: A logo is a flat mark with no text: the brand name is set in type next to
+#: it, which stays sharp; the mark gives the wordmark a face.
+STYLES = {
+    "photo": ("Photorealistic product photography, soft studio light, clean uncluttered "
+              "background, sharp focus, no text, no watermark, no logo."),
+    "lifestyle": ("Editorial lifestyle photograph, dramatic directional light, shallow depth "
+                  "of field, dark moody background, cinematic, no text, no watermark."),
+    "logo": ("Flat vector-style logo mark, a single simple geometric symbol, bold clean "
+             "shapes, one or two colours, centered on a plain solid background, no text, "
+             "no letters, no words, no gradients, no photo."),
+    "illustration": ("Clean flat illustration, simple shapes, limited palette, no text, "
+                     "no watermark."),
+}
+
 
 class ImageError(Exception):
     """For the model to read: what went wrong, without a vendor name."""
@@ -41,13 +56,13 @@ class ImageMaker:
         cap = self.limit if self.limit is not None else settings.BUILDER_IMAGES_PER_TURN
         return cap - len(self.made)
 
-    async def make(self, prompt: str, name: str, aspect: str = "square") -> dict:
+    async def make(self, prompt: str, name: str, aspect: str = "square",
+                   kind: str = "photo") -> dict:
         if self.left <= 0:
             raise ImageError(f"you have made {len(self.made)} images this turn, the most "
                              "allowed; reuse them or continue next turn")
-        ratio = ASPECTS.get(aspect, "1:1")
-        styled = (f"{prompt.strip()}. Photorealistic product photography, soft studio light, "
-                  "clean uncluttered background, sharp focus, no text, no watermark, no logo.")
+        ratio = "1:1" if kind == "logo" else ASPECTS.get(aspect, "1:1")
+        styled = f"{prompt.strip()}. {STYLES.get(kind, STYLES['photo'])}"
         try:
             data, mime = await media.generate_image(styled, aspect_ratio=ratio)
         except media.MediaRejected as e:

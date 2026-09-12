@@ -271,3 +271,34 @@ def test_payments_skill_only_when_enabled():
     block = skills.ui_block("shop", "", payments="paystack")
     assert "## Payments skill" in block and "kobo" in block and "x-paystack-signature" in block
     assert "## Payments skill" not in skills.ui_block("shop", "")
+
+
+async def test_generate_image_kinds(monkeypatch):
+    from app.builder import images as images_mod
+    from app.services.models_gateway import media
+    from tests.test_builder_assets import png
+    prompts = []
+
+    async def fake_generate(prompt, aspect_ratio="1:1"):
+        prompts.append((prompt, aspect_ratio))
+        return png(8, 8), "image/png"
+    monkeypatch.setattr(media, "generate_image", fake_generate)
+
+    class FakeAsset:
+        def __init__(self, name): self.name, self.meta = name, None
+    async def fake_add(db, project_id, filename, mime, data): return FakeAsset(filename)
+    class FakeSession:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        def add(self, row): pass
+        async def commit(self): pass
+    monkeypatch.setattr(images_mod.assets, "add", fake_add)
+    monkeypatch.setattr(images_mod, "async_session", lambda: FakeSession())
+
+    maker = images_mod.ImageMaker("p1", FakeSandbox({"src/App.tsx": "x"}), limit=5)
+    await maker.make("a lightning bolt in a circle", "mark", aspect="wide", kind="logo")
+    await maker.make("three sneakers on a dark table", "hero", aspect="wide", kind="lifestyle")
+    await maker.make("a white sneaker", "shoe", aspect="square")
+    assert prompts[0][1] == "1:1" and "no text" in prompts[0][0] and "vector-style logo" in prompts[0][0]
+    assert prompts[1][1] == "16:9" and "dramatic" in prompts[1][0]
+    assert "product photography" in prompts[2][0]

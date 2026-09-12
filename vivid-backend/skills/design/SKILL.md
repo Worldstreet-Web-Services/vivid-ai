@@ -21,6 +21,9 @@ on a 390px screen, without zooming.
 
 ## Type
 - Two sizes of heading per page, one body size, one small size. Nothing else.
+- Pick the pairing from the fonts table by audience, load it, and use the display font
+  on every heading. A shop for young buyers wants the grotesk pairing; a bakery the
+  editorial one. Never leave the default system font on headings.
 - Hero: text-4xl sm:text-5xl lg:text-6xl, font-semibold, tracking-tight, leading-[1.05].
 - Section titles: text-2xl sm:text-3xl, font-semibold, tracking-tight.
 - Body: text-base leading-relaxed; secondary text: text-sm text-muted-foreground.
@@ -30,6 +33,13 @@ on a 390px screen, without zooming.
 ## Colour and contrast
 - Use the theme tokens (background, foreground, primary, muted, accent, border). Add at
   most one accent colour for the whole app; use it for the primary action and links.
+- Premium reads as restraint: never a pure saturated primary (#ff0000, #0000ff). Soften
+  the accent (a coral instead of red, a cobalt instead of blue: chroma about 0.15 to
+  0.19 in oklch) and use it on the primary button, eyebrow labels and one highlight per
+  screen, nothing else. On dark themes: background near-black (oklch 0.13 to 0.16),
+  cards one step lighter, borders at white/10, text at 0.92 not pure white.
+- An eyebrow label above the hero headline (small caps, tracking-wider, accent colour,
+  a place or a promise: "SURULERE · LAGOS") is worth more than a badge.
 - Body text is foreground on background, never grey on grey. Muted text only for labels,
   captions and metadata, and never below 14px.
 - Dark mode works because you used tokens, not literal colours. Never hardcode #fff.
@@ -40,13 +50,18 @@ on a 390px screen, without zooming.
 - Uploaded files are the product; show them large.
 - No upload for a product, a hero or a section that needs a picture? Make one with
   generate_image: describe the exact item ("a red and white running sneaker, side view,
-  on a light grey surface"), one image per product, one wide image for the hero. Never
-  ship a grey box, a broken image or an empty aspect-ratio block. If image generation is
-  unavailable, use a gradient block with the item's initial as the last resort.
+  on a light grey surface"), one image per product, and one kind=lifestyle image for the
+  hero (a group of the products in dramatic light). Never ship a grey box, a broken image
+  or an empty aspect-ratio block. If image generation is unavailable, use a gradient
+  block with the item's initial as the last resort.
+- Consistency is what makes generated photos look like a real catalogue: use the same
+  phrase for the setting in every product prompt ("on a light grey studio surface, side
+  view, soft light") so the set matches; vary only the item.
 - Logo: if the user uploaded one, use it in the header at h-8 (phones) to h-10, never
-  stretched. If not, do not generate a logo; set the brand name as a wordmark in the
-  heading font (font-semibold tracking-tight), optionally with a small lucide icon. Text
-  logos stay sharp at every size and match the type; generated logo marks do not.
+  stretched. If not, make a mark with generate_image kind=logo (a single simple symbol
+  tied to the business, in the accent colour on the background colour, no text), show it
+  at h-8 to h-9 with rounded-lg, and set the brand name next to it in the heading font
+  (font-semibold tracking-tight). The mark gives the name a face; the type keeps it sharp.
 
 ## Components and states
 - Use the shadcn components in src/components/ui. One primary button per view; the rest

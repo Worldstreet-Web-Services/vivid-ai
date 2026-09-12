@@ -100,16 +100,19 @@ SUPABASE_SCHEMAS: list[dict] = [
 #: in public/uploads like an upload, so the app can use it by path.
 IMAGE_SCHEMAS: list[dict] = [
     _fn("generate_image",
-        "Create a photo-style image for the app when the user has not uploaded one: a "
-        "product shot, a hero image, a background. Describe the subject, setting and mood "
-        "in one or two sentences; the style (studio photography, clean background) is "
-        "added for you. The file lands at /uploads/<name> and is returned as a path to "
-        "use in an <img>. Not for logos or text: set the brand name in type instead.",
+        "Create an image for the app when the user has not uploaded one. kind=photo: a "
+        "studio product shot (describe the item exactly). kind=lifestyle: one dramatic "
+        "editorial shot for a hero. kind=logo: a flat symbol mark with no text, to sit "
+        "beside the brand name set in type (describe the symbol, e.g. 'a lightning bolt "
+        "inside a circle', and the colours). kind=illustration: flat artwork. The style "
+        "is added for you. The file lands at /uploads/<name> and is returned as a path.",
         {"prompt": {"type": "string", "description": "What the picture shows."},
          "name": {"type": "string",
                   "description": "File name without extension, e.g. air-zoom-red."},
          "aspect": {"type": "string", "enum": ["square", "landscape", "wide", "portrait"],
-                    "description": "square for products, wide for heroes (default square)."}},
+                    "description": "square for products, wide for heroes (default square)."},
+         "kind": {"type": "string", "enum": ["photo", "lifestyle", "logo", "illustration"],
+                  "description": "Default photo."}},
         ["prompt", "name"]),
 ]
 
@@ -228,7 +231,8 @@ async def _generate_image(args: dict, images: ImageMaker) -> Outcome:
         return Outcome("error: describe the picture in a sentence")
     if not _IMAGE_NAME.match(name):
         return Outcome("error: name must be a lowercase slug like air-zoom-red")
-    out = await images.make(prompt, name, str(args.get("aspect") or "square"))
+    out = await images.make(prompt, name, str(args.get("aspect") or "square"),
+                            kind=str(args.get("kind") or "photo"))
     dims = out["meta"].get("width")
     size = f"{out['meta']['width']}x{out['meta']['height']}, " if dims else ""
     return Outcome(f"Image ready at {out['path']} ({size}{out['bytes'] // 1024} KB). "
