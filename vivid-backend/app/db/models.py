@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (BigInteger, Boolean, DateTime, ForeignKey, Index,
-                        Integer, String, Text)
+                        Integer, Numeric, String, Text, UniqueConstraint)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -242,3 +242,123 @@ class MessageEmbedding(Base):
         ForeignKey("messages.id", ondelete="CASCADE"), primary_key=True)
     embedding: Mapped[list[float]] = mapped_column(Vector(settings.EMBEDDING_DIM))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+# ----------------------------------------------------------------- builder
+# The app builder (app/builder). Its own tables, prefixed builder_, so the
+# assistant's chats and messages are untouched: the two products have
+# different rows and different lifecycles. All of them exist from phase 1
+# even where only projects and messages are used yet; usage rows in
+# particular are cheap to write now and painful to retrofit.
+
+class BuilderProject(Base):
+    __tablename__ = "builder_projects"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    owner_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(120))
+    #: spec.md as agreed in plan mode; injected into every turn.
+    spec_md: Mapped[str | None] = mapped_column(Text, default=None)
+    #: The snapshot the preview is on. Plain string, not an FK: the row is
+    #: written before its first snapshot and a restore points it back.
+    current_snapshot_id: Mapped[str | None] = mapped_column(String(36), default=None)
+    #: none | byo | cloud
+    backend_mode: Mapped[str] = mapped_column(String(8), default="none")
+    supabase_project_ref: Mapped[str | None] = mapped_column(String(64), default=None)
+    published_url: Mapped[str | None] = mapped_column(String(512), default=None)
+    #: Files touched in the last two turns, newest turn first, for the
+    #: context block. A list of lists of project-relative paths.
+    recent_files: Mapped[list | None] = mapped_column(JSONB, default=None)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now)
+
+
+class BuilderMessage(Base):
+    """One message in a project's thread. `parts` is the AI SDK UI message
+    parts list exactly as streamed (text, tool-*, step-start, data-*), so a
+    client reloads a thread into the same shape it watched live."""
+    __tablename__ = "builder_messages"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("builder_projects.id", ondelete="CASCADE"), index=True)
+    role: Mapped[str] = mapped_column(String(16))  # user | assistant
+    parts: Mapped[list] = mapped_column(JSONB, default=list)
+    #: Vendor slug that produced an assistant message; analytics only.
+    model: Mapped[str | None] = mapped_column(String(128), default=None)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    __table_args__ = (Index("ix_builder_messages_project_created",
+                            "project_id", "created_at"),)
+
+
+class BuilderSnapshot(Base):
+    """A project's files after one turn: a tarball in object storage. The
+    snapshot is the truth; any sandbox can be rebuilt from it."""
+    __tablename__ = "builder_snapshots"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("builder_projects.id", ondelete="CASCADE"), index=True)
+    seq: Mapped[int] = mapped_column(Integer)
+    r2_key: Mapped[str] = mapped_column(String(512))
+    commit_sha: Mapped[str | None] = mapped_column(String(64), default=None)
+    summary: Mapped[str | None] = mapped_column(Text, default=None)
+    size_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    __table_args__ = (UniqueConstraint("project_id", "seq",
+                                       name="uq_builder_snapshots_project_seq"),)
+
+
+class BuilderSecret(Base):
+    """A per-project secret (Supabase tokens, service keys), Fernet-encrypted
+    at rest. Values never appear in a tool result or the stream."""
+    __tablename__ = "builder_secrets"
+
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("builder_projects.id", ondelete="CASCADE"), primary_key=True)
+    key: Mapped[str] = mapped_column(String(128), primary_key=True)
+    encrypted_value: Mapped[str] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now)
+
+
+class BuilderPublish(Base):
+    __tablename__ = "builder_publishes"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("builder_projects.id", ondelete="CASCADE"), index=True)
+    snapshot_id: Mapped[str | None] = mapped_column(String(36), default=None)
+    url: Mapped[str | None] = mapped_column(String(512), default=None)
+    #: pending | building | live | failed
+    status: Mapped[str] = mapped_column(String(16), default="pending")
+    error: Mapped[str | None] = mapped_column(Text, default=None)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now)
+
+
+class BuilderUsageEvent(Base):
+    """One metered thing: a model call, a sandbox session, a stored
+    snapshot, a Supabase project. Billing is built on these later."""
+    __tablename__ = "builder_usage_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("builder_projects.id", ondelete="CASCADE"), index=True)
+    #: model | sandbox | storage | supabase
+    kind: Mapped[str] = mapped_column(String(16), index=True)
+    quantity: Mapped[float] = mapped_column(Numeric(20, 6), default=0)
+    #: tokens | seconds | bytes | projects
+    unit: Mapped[str] = mapped_column(String(16))
+    #: Null when the price was not known at write time; never a guess.
+    cost_usd: Mapped[float | None] = mapped_column(Numeric(14, 8), default=None)
+    model: Mapped[str | None] = mapped_column(String(128), default=None)
+    #: Token breakdown, sandbox id, snapshot seq: whatever explains the row.
+    meta: Mapped[dict | None] = mapped_column(JSONB, default=None)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, index=True)

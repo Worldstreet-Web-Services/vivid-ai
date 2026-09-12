@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -8,6 +9,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import api_router
+from app.builder.sandbox.manager import manager as sandbox_manager
 from app.core import errors
 from app.core.config import settings
 from app.db.session import init_db
@@ -33,7 +35,12 @@ async def lifespan(app: FastAPI):
         await storage.ensure_bucket()
     except Exception as e:
         log.warning("object storage unavailable: %s", e)
+    # The builder's sandboxes cost money while they run; the sweeper kills
+    # the ones nobody has touched for a while.
+    sweeper = asyncio.create_task(sandbox_manager.sweeper(app.state.redis))
     yield
+    sweeper.cancel()
+    await sandbox_manager.kill_all(app.state.redis)
     await gateway_http.aclose()
     if app.state.arq is not None:
         await app.state.arq.aclose()
@@ -88,6 +95,9 @@ API_TAGS = [
      "description": "The assistant's own tools, callable directly: web search, "
                     "code execution, browsing, weather, exchange rates."},
     {"name": "chats", "description": "Conversations and their messages."},
+    {"name": "builder",
+     "description": "The app builder: projects, the streaming chat that "
+                    "writes the app, the live preview and its files."},
     {"name": "models",
      "description": "OpenAI-compatible chat completions, for tools that "
                     "already speak that shape."},
