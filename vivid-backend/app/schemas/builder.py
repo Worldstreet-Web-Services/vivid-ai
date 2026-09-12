@@ -91,3 +91,16 @@ class SupabaseLinkIn(BaseModel):
     #: publishable (anon) key, both safe in a browser.
     url: str | None = Field(default=None, max_length=256)
     anon_key: str | None = Field(default=None, max_length=512)
+
+
+class PublishOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    snapshot_id: str | None
+    url: str | None
+    #: pending | building | live | failed
+    status: str
+    error: str | None
+    created_at: datetime
+    updated_at: datetime

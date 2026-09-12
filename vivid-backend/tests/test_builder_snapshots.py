@@ -8,6 +8,7 @@ from pgvector.sqlalchemy import Vector
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.ext.compiler import compiles
+from sqlalchemy.pool import StaticPool
 
 from app.builder import blob, pricing, snapshots, usage
 from app.builder.loop import ModelCall
@@ -28,7 +29,9 @@ def _vector_on_sqlite(type_, compiler, **kw):
 
 @pytest_asyncio.fixture
 async def db():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    # One shared connection: an in-memory SQLite database exists per
+    # connection, and background jobs open sessions of their own.
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", poolclass=StaticPool)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     maker = async_sessionmaker(engine, expire_on_commit=False)

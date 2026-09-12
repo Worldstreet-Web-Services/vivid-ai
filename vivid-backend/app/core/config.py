@@ -373,6 +373,22 @@ class Settings(BaseSettings):
     # This backend's public origin, for OAuth redirect URIs.
     PUBLIC_BASE_URL: str = "http://localhost:8000"
 
+    # --- Publishing (Cloudflare Pages) -----------------------------------
+    # One Pages project holds every published app, one branch alias each:
+    # https://<app>.<CF_PAGES_PROJECT>.pages.dev. The token needs
+    # "Cloudflare Pages: Edit" on the account and never enters a sandbox:
+    # the sandbox builds, the backend uploads. Empty token disables publish.
+    CF_API_TOKEN: str = ""
+    CF_ACCOUNT_ID: str = ""
+    CF_PAGES_PROJECT: str = "vivid-apps"
+    CF_API_BASE: str = "https://api.cloudflare.com/client/v4"
+    # The public hostname pattern, {alias} being the app's branch alias.
+    # Change it once a custom domain fronts the project.
+    BUILDER_PUBLISH_HOST: str = "{alias}.{project}.pages.dev"
+    BUILDER_BUILD_TIMEOUT: int = 300
+    # A built site above this is refused (a stray video in public/).
+    BUILDER_PUBLISH_MAX_BYTES: int = 25 * 1024 * 1024
+
     # Limits
     RATE_LIMIT_PER_MINUTE: int = 20
     DEFAULT_CLIENT_ID: str = "vivid_web"

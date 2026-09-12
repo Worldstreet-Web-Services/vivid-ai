@@ -21,10 +21,14 @@
     GET    /builder/projects/{id}/usage      this project's metered totals
     POST   /builder/projects/{id}/supabase   link a Supabase project (byo)
     DELETE /builder/projects/{id}/supabase   unlink
+    POST   /builder/projects/{id}/publish    build and put the app on a live URL (202)
+    GET    /builder/projects/{id}/publishes  history, newest first
+    GET    /builder/projects/{id}/publishes/{publish_id}
 
 One turn per project at a time (409 otherwise). The stream is the contract
 for any client: see docs/builder.md.
 """
+import asyncio
 import logging
 from datetime import datetime, timezone
 
@@ -34,19 +38,21 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
-from app.builder import planning, routing, secrets, snapshots, stream, supabase, tools, usage
+from app.builder import (planning, publish, routing, secrets, snapshots, stream, supabase,
+                         tools, usage)
 from app.builder.loop import ModelCall, TurnRunner, turns
 from app.builder.planning import PlanRunner
 from app.builder.sandbox.base import PathError, SandboxError, safe_path
 from app.builder.sandbox.manager import manager
 from app.core.config import settings
 from app.core.errors import APIError
-from app.db.models import BuilderMessage, BuilderProject, BuilderSnapshot, Connector, User
+from app.db.models import (BuilderMessage, BuilderProject, BuilderPublish, BuilderSnapshot,
+                           Connector, User)
 from app.services.connectors import supabase as supabase_connector
 from app.db.session import async_session
 from app.schemas.builder import (CancelOut, ChatIn, FileOut, FilesOut, MessageOut,
                                  PreviewOut, ProjectCreate, ProjectOut, ProjectUpdate,
-                                 SnapshotOut, SupabaseLinkIn, UsageOut)
+                                 PublishOut, SnapshotOut, SupabaseLinkIn, UsageOut)
 from app.services import rate_limit
 from app.services.models_gateway import provider
 
@@ -414,6 +420,90 @@ async def unlink_supabase(project_id: str, user: User = Depends(get_current_user
     await secrets.delete_secret(db, project_id, "SUPABASE_ANON_KEY")
     await db.commit()
     return project
+
+
+# --------------------------------------------------------------- publish
+#: Publish jobs in flight, so a crash in one is logged and a second click
+#: while one runs is refused.
+_publishing: dict[str, asyncio.Task] = {}
+
+
+@router.post("/projects/{project_id}/publish", response_model=PublishOut, status_code=202)
+async def start_publish(project_id: str, request: Request,
+                        user: User = Depends(get_current_user),
+                        db: AsyncSession = Depends(get_db)):
+    """Build the current files and put them on the project's live URL. The
+    row comes back `pending`; poll it until `live` or `failed`."""
+    project = await _owned(project_id, user, db)
+    if not publish.configured():
+        raise APIError(503, "not_configured", "Publishing is not configured.")
+    if turns.running(project_id):
+        raise APIError(409, "busy", "Wait for the running turn to finish first.")
+    if project_id in _publishing and not _publishing[project_id].done():
+        raise APIError(409, "busy", "A publish is already running for this project.")
+    row = BuilderPublish(project_id=project_id, snapshot_id=project.current_snapshot_id,
+                         status="pending")
+    db.add(row)
+    await db.commit()
+    alias = publish.alias_for(project.name, project.id)
+    _publishing[project_id] = asyncio.create_task(
+        _run_publish(project_id, row.id, alias, request.app.state.redis))
+    return row
+
+
+async def _run_publish(project_id: str, publish_id: str, alias: str, redis) -> None:
+    async def update(**fields):
+        async with async_session() as db:
+            row = await db.get(BuilderPublish, publish_id)
+            if row is None:
+                return
+            for k, v in fields.items():
+                setattr(row, k, v)
+            if fields.get("status") == "live":
+                project = await db.get(BuilderProject, project_id)
+                if project is not None:
+                    project.published_url = fields.get("url")
+            await db.commit()
+
+    try:
+        await update(status="building")
+        sandbox = await _start_sandbox(project_id, redis)
+        site = await publish.build_site(sandbox)
+        await manager.touch(project_id)
+        pages = publish.Pages()
+        await pages.deploy(site, alias, f"vivid publish {publish_id[:8]}")
+        url = publish.public_url(alias)
+        await publish.wait_until_live(url)
+        await update(status="live", url=url)
+        log.info("project %s published at %s", project_id, url)
+    except (publish.PublishError, SandboxError, snapshots.SnapshotError) as e:
+        await update(status="failed", error=str(e)[:2000])
+    except Exception as e:                          # never a stuck "building"
+        log.exception("publish %s failed", publish_id)
+        await update(status="failed", error=provider.scrub(str(e))[:500])
+    finally:
+        _publishing.pop(project_id, None)
+
+
+@router.get("/projects/{project_id}/publishes", response_model=list[PublishOut])
+async def list_publishes(project_id: str, user: User = Depends(get_current_user),
+                         db: AsyncSession = Depends(get_db)):
+    await _owned(project_id, user, db)
+    rows = await db.execute(select(BuilderPublish)
+                            .where(BuilderPublish.project_id == project_id)
+                            .order_by(BuilderPublish.created_at.desc()))
+    return list(rows.scalars())
+
+
+@router.get("/projects/{project_id}/publishes/{publish_id}", response_model=PublishOut)
+async def get_publish(project_id: str, publish_id: str,
+                      user: User = Depends(get_current_user),
+                      db: AsyncSession = Depends(get_db)):
+    await _owned(project_id, user, db)
+    row = await db.get(BuilderPublish, publish_id)
+    if row is None or row.project_id != project_id:
+        raise APIError(404, "not_found", "No such publish")
+    return row
 
 
 @router.post("/projects/{project_id}/build", response_model=ProjectOut)

@@ -4,8 +4,10 @@ Files live in a dict; commands are answered by a script the test sets up.
 The typecheck is the one command the tools care about, so it is scripted by
 name: `fake.tsc_output = "..."` makes the next typecheck fail with that text.
 """
+import io
 import json
 import posixpath
+import tarfile
 
 from app.builder.sandbox.base import RunResult, Sandbox, safe_path
 
@@ -71,8 +73,18 @@ class FakeSandbox(Sandbox):
             return RunResult(0, ("NOCHANGE\n" if not changed else "") + sha + "\n", "")
         if cmd.startswith("tar -czf "):
             path = cmd.split()[2]
-            self.blobs[path] = json.dumps(self.files).encode()
+            if "-C dist" in cmd:
+                # A built site: a real tarball of the files under dist/.
+                self.blobs[path] = _tgz({k[5:]: v.encode() for k, v in self.files.items()
+                                         if k.startswith("dist/")})
+            else:
+                self.blobs[path] = json.dumps(self.files).encode()
             return RunResult(0, "", "")
+        if cmd.startswith("rm -rf dist && npx vite build"):
+            for needle, result in self.responses:
+                if needle in cmd:
+                    return result
+            return RunResult(0, "built", "")
         if "tar -xzf " in cmd:
             path = cmd.split("tar -xzf ")[1].split()[0]
             self.files = json.loads(self.blobs[path].decode())
@@ -100,3 +112,13 @@ class FakeSandbox(Sandbox):
 
 def tree(files: dict[str, str]) -> list[str]:
     return sorted(posixpath.normpath(p) for p in files)
+
+
+def _tgz(files: dict[str, bytes]) -> bytes:
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+        for name, data in files.items():
+            info = tarfile.TarInfo(f"./{name}")
+            info.size = len(data)
+            tf.addfile(info, io.BytesIO(data))
+    return buf.getvalue()

@@ -137,6 +137,25 @@ OAuth tokens expire; the refresh token is stored with the connector and
 renewed before use. Connector tokens (GitHub too) are encrypted at rest with
 `SECRETS_ENCRYPTION_KEY`; rows written before that stay readable.
 
+## Publishing
+
+```
+POST /v1/builder/projects/{id}/publish              -> 202 publish row (status: pending)
+GET  /v1/builder/projects/{id}/publishes            -> newest first
+GET  /v1/builder/projects/{id}/publishes/{pub_id}   -> poll until live | failed
+```
+
+Publish runs `vite build` in the sandbox, brings `dist/` back to the
+backend, and uploads it to Cloudflare Pages with the same direct-upload
+protocol Wrangler uses; the Cloudflare token never enters a sandbox. Every
+app is a branch alias on one Pages project, so the URL is
+`https://<alias>.<CF_PAGES_PROJECT>.pages.dev`, where the alias is the
+project's name slug plus six characters of its id. A `_redirects` rule
+sends unknown paths to `index.html` for client-side routing. On success
+the project's `published_url` is set. A failed build puts the compiler's
+last lines in `error`. When a custom domain fronts the Pages project,
+`BUILDER_PUBLISH_HOST` changes the pattern and nothing else moves.
+
 ## Versions
 
 Every turn that changes a file ends with a snapshot: a git commit in the
@@ -176,6 +195,8 @@ SUPABASE_OAUTH_CLIENT_ID, SUPABASE_OAUTH_CLIENT_SECRET   the Connect button (das
 SUPABASE_OAUTH_REDIRECT_URI   default PUBLIC_BASE_URL + /v1/connectors/supabase/callback
 SUPABASE_OAUTH_RETURN_URL     where the browser goes after connecting (default: a plain page)
 PUBLIC_BASE_URL               this backend's public origin
+CF_API_TOKEN (Cloudflare Pages: Edit), CF_ACCOUNT_ID, CF_PAGES_PROJECT   publishing
+BUILDER_PUBLISH_HOST          default {alias}.{project}.pages.dev
 ```
 
 A turn is capped at `BUILDER_MAX_STEPS` (20) tool calls. A model call whose

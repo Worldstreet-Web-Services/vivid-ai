@@ -276,3 +276,22 @@ should change.
 - Still needed from the owner to prove the tool path live: a personal
   access token (or the OAuth app). The client env path was verified live
   against the provided project.
+
+## 10. Phase 5 choices (2026-09-12)
+
+- No domain yet, so apps publish to `<alias>.<project>.pages.dev` on one
+  Pages project; the hostname pattern is a setting for when a domain
+  arrives. Pages custom domains apply to a project's production branch,
+  not to branch aliases, so `name.vividcode.app` per app will need either
+  one Pages project per app or a small router in front. Decided when the
+  domain exists; nothing in the API changes.
+- The sandbox builds, the backend uploads. Running Wrangler inside the
+  sandbox would have been less code but would put the account-wide Pages
+  token where user code runs.
+- Direct upload implemented as Wrangler does it (upload token, check
+  missing, batched base64 upload, upsert hashes, manifest deployment);
+  the hash is blake3(base64 body + extension)[:32], verified against
+  `packages/deploy-helpers/src/deploy/helpers/hash.ts`.
+- Publish is a background task with a row to poll, not a stream: a build
+  plus upload takes a minute, and the client already polls snapshots the
+  same way.

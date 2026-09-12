@@ -11,6 +11,7 @@ package, not remembered.
 """
 import logging
 
+import httpx
 from e2b import AsyncSandbox, CommandExitException, TimeoutException
 from e2b.exceptions import NotFoundException, SandboxException
 
@@ -44,7 +45,7 @@ class E2BSandbox(Sandbox):
                 timeout=settings.BUILDER_SANDBOX_TIMEOUT_SECONDS,
                 metadata={"project_id": project_id},
                 **_api())
-        except SandboxException as e:
+        except (SandboxException, httpx.HTTPError) as e:
             raise SandboxError(f"could not create sandbox: {e}") from e
         return cls(sb)
 
@@ -56,7 +57,7 @@ class E2BSandbox(Sandbox):
                 sandbox_id, timeout=settings.BUILDER_SANDBOX_TIMEOUT_SECONDS, **_api())
         except NotFoundException:
             return None
-        except SandboxException as e:
+        except (SandboxException, httpx.HTTPError) as e:
             log.warning("connect to sandbox %s failed: %s", sandbox_id, e)
             return None
         if not await sb.is_running():
@@ -72,13 +73,13 @@ class E2BSandbox(Sandbox):
             return await self._sb.files.read(self._abs(path))
         except NotFoundException:
             raise FileNotFoundError(path)
-        except SandboxException as e:
+        except (SandboxException, httpx.HTTPError) as e:
             raise SandboxError(f"read failed: {e}") from e
 
     async def write_file(self, path: str, content: str) -> None:
         try:
             await self._sb.files.write(self._abs(path), content)
-        except SandboxException as e:
+        except (SandboxException, httpx.HTTPError) as e:
             raise SandboxError(f"write failed: {e}") from e
 
     def _anywhere(self, path: str) -> str:
@@ -89,13 +90,13 @@ class E2BSandbox(Sandbox):
             return bytes(await self._sb.files.read(self._anywhere(path), format="bytes"))
         except NotFoundException:
             raise FileNotFoundError(path)
-        except SandboxException as e:
+        except (SandboxException, httpx.HTTPError) as e:
             raise SandboxError(f"read failed: {e}") from e
 
     async def write_bytes(self, path: str, data: bytes) -> None:
         try:
             await self._sb.files.write(self._anywhere(path), data)
-        except SandboxException as e:
+        except (SandboxException, httpx.HTTPError) as e:
             raise SandboxError(f"write failed: {e}") from e
 
     # ------------------------------------------------------------ commands
@@ -109,7 +110,7 @@ class E2BSandbox(Sandbox):
         except TimeoutException:
             return RunResult(124, "", f"command timed out after {timeout:.0f}s",
                              timed_out=True)
-        except SandboxException as e:
+        except (SandboxException, httpx.HTTPError) as e:
             raise SandboxError(f"command failed to start: {e}") from e
         return RunResult(result.exit_code, result.stdout, result.stderr)
 
@@ -120,17 +121,19 @@ class E2BSandbox(Sandbox):
     async def touch(self) -> None:
         try:
             await self._sb.set_timeout(settings.BUILDER_SANDBOX_TIMEOUT_SECONDS)
-        except SandboxException as e:
+        except (SandboxException, httpx.HTTPError) as e:
+            # A missed extension is not worth failing a turn or a publish;
+            # the SDK raises httpx errors when a connection drops.
             log.warning("set_timeout on %s failed: %s", self.id, e)
 
     async def is_running(self) -> bool:
         try:
             return await self._sb.is_running()
-        except SandboxException:
+        except (SandboxException, httpx.HTTPError):
             return False
 
     async def kill(self) -> None:
         try:
             await self._sb.kill()
-        except SandboxException as e:
+        except (SandboxException, httpx.HTTPError) as e:
             log.warning("kill %s failed: %s", self.id, e)

@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.ext.compiler import compiles
+from sqlalchemy.pool import StaticPool
 
 from app.api import deps
 from app.api.deps import Principal, get_db, get_principal
@@ -69,7 +70,9 @@ class FakeManager:
 
 @pytest_asyncio.fixture
 async def maker():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    # One shared connection: an in-memory SQLite database exists per
+    # connection, and background jobs open sessions of their own.
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", poolclass=StaticPool)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     maker = async_sessionmaker(engine, expire_on_commit=False)
@@ -522,3 +525,70 @@ def test_supabase_oauth_routes(client, maker, monkeypatch):
     assert c.config_json["via"] == "oauth" and tokens.read(c.config_json["refresh_token"]) == "rt"
     assert c.config_json["projects"][0]["ref"] == "refone"
     assert client.get("/v1/connectors").json()[0]["projects"][0]["ref"] == "refone"
+
+
+def test_publish_job_updates_row_and_project(client, monkeypatch, fake_manager):
+    """POST publish answers 202 with a pending row; the job builds in the
+    sandbox, uploads, and the row and project carry the live URL."""
+    import asyncio
+    from app.builder import publish as publish_mod
+    monkeypatch.setattr(settings, "CF_API_TOKEN", "t")
+    monkeypatch.setattr(settings, "CF_ACCOUNT_ID", "acct")
+    monkeypatch.setattr(settings, "CF_PAGES_PROJECT", "vivid-apps")
+    deployed = []
+
+    class FakePages:
+        async def deploy(self, site, alias, message):
+            deployed.append((sorted(site.files), alias))
+            return {"id": "dep"}
+    monkeypatch.setattr(publish_mod, "Pages", FakePages)
+
+    async def instant(url, timeout=90):
+        return True
+    monkeypatch.setattr(publish_mod, "wait_until_live", instant)
+
+    # The job must not touch the one in-memory SQLite connection while the
+    # POST's own session is still open; start it after the response.
+    real_create_task = asyncio.create_task
+
+    async def later(coro):
+        await asyncio.sleep(0.2)
+        return await coro
+    monkeypatch.setattr(builder_routes.asyncio, "create_task",
+                        lambda coro: real_create_task(later(coro)))
+    sb = fake_manager.sandbox
+    sb.files["dist/index.html"] = "<html>"
+    sb.files["dist/assets/a.js"] = "1"
+
+    pid = client.post("/v1/builder/projects", json={"name": "Todo App", "skip_plan": True}).json()["id"]
+    r = client.post(f"/v1/builder/projects/{pid}/publish")
+    assert r.status_code == 202 and r.json()["status"] == "pending"
+    pub_id = r.json()["id"]
+
+    # The job runs on the app's loop between requests. In-memory SQLite has
+    # one connection, so wait for the job to finish before asking again.
+    import time
+    for _ in range(200):
+        task = builder_routes._publishing.get(pid)
+        if task is None or task.done():
+            break
+        time.sleep(0.05)
+    row = client.get(f"/v1/builder/projects/{pid}/publishes/{pub_id}").json()
+    assert row["status"] == "live", row
+    alias = publish_mod.alias_for("Todo App", pid)
+    assert row["url"] == f"https://{alias}.vivid-apps.pages.dev"
+    assert deployed == [(["assets/a.js", "index.html"], alias)]
+    assert client.get(f"/v1/builder/projects/{pid}").json()["published_url"] == row["url"]
+    assert [p["id"] for p in client.get(f"/v1/builder/projects/{pid}/publishes").json()] == [pub_id]
+    assert any("vite build" in c for c in sb.commands)
+
+
+def test_publish_refused_when_unconfigured_or_busy(client, monkeypatch):
+    monkeypatch.setattr(settings, "CF_API_TOKEN", "")
+    pid = client.post("/v1/builder/projects", json={"skip_plan": True}).json()["id"]
+    assert client.post(f"/v1/builder/projects/{pid}/publish").status_code == 503
+    monkeypatch.setattr(settings, "CF_API_TOKEN", "t")
+    monkeypatch.setattr(settings, "CF_ACCOUNT_ID", "acct")
+    builder_routes.turns.start(pid)
+    r = client.post(f"/v1/builder/projects/{pid}/publish")
+    assert r.status_code == 409
