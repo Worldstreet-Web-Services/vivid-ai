@@ -295,3 +295,16 @@ should change.
 - Publish is a background task with a row to poll, not a stream: a build
   plus upload takes a minute, and the client already polls snapshots the
   same way.
+
+### Phase 5 result (2026-09-12, live)
+
+| step | result |
+|---|---|
+| build turn, bakery landing page | 4 steps, 287 s (slow model day) |
+| first publish | failed after the build: a dropped connection on the E2B keep-alive call, which the driver treated as fatal. Now a warning |
+| second publish | live in 118 s at `https://lagos-bakery-db8bc1.vivid-apps.pages.dev` |
+| checks | page 200; `/some/route` 200 (SPA fallback); JS bundle served as text/javascript and contains the bakery copy and naira prices |
+
+The Pages project `vivid-apps` was created by the first publish. Nothing
+unpublishes yet: deleting a project leaves its alias live until a later
+phase adds deployment deletion.

@@ -139,9 +139,12 @@ def client(maker, monkeypatch, fake_manager):
 
     app.dependency_overrides[get_db] = db
     app.dependency_overrides[get_principal] = principal
-    tc = TestClient(app, raise_server_exceptions=False)
-    tc.as_user = lambda uid: current.__setitem__("id", uid)
-    return tc
+    # Entered as a context so one event loop serves every request and the
+    # background jobs the routes start; otherwise each request gets its own
+    # loop and the pooled aiosqlite connection is bound to the first.
+    with TestClient(app, raise_server_exceptions=False) as tc:
+        tc.as_user = lambda uid: current.__setitem__("id", uid)
+        yield tc
 
 
 def _incr(redis):
