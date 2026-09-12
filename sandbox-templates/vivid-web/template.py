@@ -24,6 +24,7 @@ APP = "/home/user/app"
 FILES = ["package.json", "index.html", "vite.config.ts", "tsconfig.json",
          "tsconfig.app.json", "tsconfig.node.json", "components.json",
          ".gitignore", "start.sh"]
+DIRS = ["src", "scripts"]
 
 
 def main() -> int:
@@ -36,12 +37,16 @@ def main() -> int:
         .from_node_image("22")
         # git for snapshots and file listing; bash for the tools' shell.
         # Build steps run as `user` unless told otherwise; only apt needs root.
+        # git for snapshots; chromium so the builder can screenshot its own
+        # page for the design critique (playwright-core drives it).
         .run_cmd("apt-get update && apt-get install -y --no-install-recommends git bash "
+                 "chromium fonts-liberation fonts-noto-color-emoji "
                  "&& rm -rf /var/lib/apt/lists/*", user="root")
         .run_cmd(f"mkdir -p {APP} && chown -R user:user /home/user", user="root")
         .set_workdir(APP)
         .copy(FILES, f"{APP}/", user="user")
         .copy("src", f"{APP}/src", user="user")
+        .copy("scripts", f"{APP}/scripts", user="user")
         .run_cmd("npm install --no-audit --no-fund", user="user")
         .run_cmd("git init -q -b main && git config user.name Vivid "
                  "&& git config user.email builder@vivid "

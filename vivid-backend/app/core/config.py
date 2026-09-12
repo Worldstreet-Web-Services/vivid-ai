@@ -394,6 +394,27 @@ class Settings(BaseSettings):
     BUILDER_ASSETS_MAX_TOTAL_BYTES: int = 48 * 1024 * 1024
     BUILDER_ASSETS_PER_PROJECT: int = 60
 
+    # --- Design quality -----------------------------------------------
+    # Skills are folders of packaged expertise (SKILL.md + references) the
+    # orchestrator attaches to a turn by stage and project; users never see
+    # them. Relative paths resolve from the backend's working directory.
+    BUILDER_SKILLS_DIR: str = "skills"
+    BUILDER_DESIGN_SKILL: bool = True
+    # After a build or edit turn that changed UI, screenshot the page at
+    # desktop and phone widths and let the model critique and fix it.
+    BUILDER_DESIGN_CRITIQUE: bool = True
+    BUILDER_CRITIQUE_ROUNDS: int = 1
+    # Extra steps the critique may spend beyond BUILDER_MAX_STEPS.
+    BUILDER_CRITIQUE_STEPS: int = 6
+    BUILDER_SCREENSHOT_TIMEOUT: int = 90
+    # Scores screenshots in the design eval. A different vendor from the
+    # builder, so it is not grading its own work. Must take image input.
+    DESIGN_JUDGE_MODEL: str = "z-ai/glm-5.3-flash"
+
+    # Pictures the builder generates for a project with no uploads, per
+    # turn. Each costs about a third of a cent on the default image model.
+    BUILDER_IMAGES_PER_TURN: int = 6
+
     # Limits
     RATE_LIMIT_PER_MINUTE: int = 20
     DEFAULT_CLIENT_ID: str = "vivid_web"

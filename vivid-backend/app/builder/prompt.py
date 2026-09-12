@@ -66,8 +66,10 @@ The service key is only ever used inside edge functions.
 
 
 def system_prompt(spec_md: str | None, context_block: str, backend: bool = False,
-                  assets_block: str = "") -> str:
+                  assets_block: str = "", skill_block: str = "") -> str:
     parts = [STATIC]
+    if skill_block:
+        parts.append("\n" + skill_block)
     if backend:
         parts.append("\n" + SUPABASE)
     if assets_block:

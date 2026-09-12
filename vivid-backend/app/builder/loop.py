@@ -16,7 +16,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import AsyncIterator, Awaitable, Callable
 
-from app.builder import context, prompt, routing, stream, tools
+from app.builder import context, prompt, routing, screenshots, skills, stream, tools
 from app.builder.sandbox.base import Sandbox
 from app.core.config import settings
 from app.services.models_gateway import code_llm, provider
@@ -55,6 +55,9 @@ class TurnResult:
     touched: list[str] = field(default_factory=list)
     typecheck_failures: int = 0
     retried: bool = False
+    critique_rounds: int = 0
+    #: Stored screenshot keys, newest round last.
+    screenshots: list[str] = field(default_factory=list)
 
     @property
     def tokens_in(self) -> int:
@@ -131,10 +134,20 @@ class TurnRunner:
                  message_id: str | None = None,
                  backend: tools.Backend | None = None,
                  assets_block: str = "",
-                 keepalive: Callable[[], Awaitable[None]] | None = None) -> None:
+                 keepalive: Callable[[], Awaitable[None]] | None = None,
+                 project_id: str = "",
+                 critique: bool | None = None,
+                 images=None) -> None:
         self.sandbox = sandbox
         self.backend = backend
+        #: An ImageMaker when the image model is configured; the model may
+        #: make pictures for a project with no uploads.
+        self.images = images
         self.assets_block = assets_block
+        self.project_id = project_id
+        #: Screenshot the page after the answer and let the model fix what
+        #: it sees. Defaults to the setting; the eval turns it off for A.
+        self.critique = settings.BUILDER_DESIGN_CRITIQUE if critique is None else critique
         #: Awaited after every step. A long turn outlives a sandbox whose
         #: lifetime is only extended between turns; this extends it as
         #: the turn goes.
@@ -193,14 +206,21 @@ class TurnRunner:
         self.result.model = endpoint.model
         block = await context.build(self.sandbox, self.recent_files)
         messages = [{"role": "system",
-                     "content": prompt.system_prompt(self.spec_md, block,
-                                                     backend=self.backend is not None,
-                                                     assets_block=self.assets_block)}]
+                     "content": prompt.system_prompt(
+                         self.spec_md, block, backend=self.backend is not None,
+                         assets_block=self.assets_block,
+                         skill_block=skills.design_block(self.spec_md, self.user_text))}]
         messages += self.history
         messages.append({"role": "user", "content": self.user_text})
 
         strikes = 0
-        for step in range(1, settings.BUILDER_MAX_STEPS + 1):
+        budget = settings.BUILDER_MAX_STEPS
+        critique_left = settings.BUILDER_CRITIQUE_ROUNDS if self.critique else 0
+        step = 0
+        while True:
+            step += 1
+            if step > budget:
+                break
             if self.cancelled():
                 yield stream.abort("cancelled by the user")
                 self.result.reason = CANCELLED
@@ -208,7 +228,7 @@ class TurnRunner:
             self.result.steps += 1
             yield stream.start_step()
 
-            call_step = ModelStep(messages, tools.schemas_for(self.backend), endpoint)
+            call_step = ModelStep(messages, tools.schemas_for(self.backend, self.images), endpoint)
             async for part in call_step.run():
                 yield part
             if call_step.failed is not None:
@@ -222,6 +242,25 @@ class TurnRunner:
                 messages.append({"role": "assistant", "content": text})
                 yield stream.finish_step()
                 self.result.reason = ANSWERED
+                if critique_left > 0 and self.result.touched:
+                    # The page is whole: look at it, then keep going with a
+                    # few extra steps for the fixes.
+                    critique_left -= 1
+                    shots = await screenshots.capture(
+                        self.sandbox, self.project_id or "project",
+                        f"{self.message_id}-r{self.result.critique_rounds + 1}")
+                    if shots:
+                        self.result.critique_rounds += 1
+                        self.result.screenshots += [s.key for s in shots if s.key]
+                        yield stream.data("critique", {
+                            "round": self.result.critique_rounds,
+                            "screenshots": [{"name": s.name, "width": s.width, "url": s.url}
+                                            for s in shots]})
+                        messages.append(screenshots.critique_message(shots))
+                        budget = step + settings.BUILDER_CRITIQUE_STEPS
+                        if self.keepalive is not None:
+                            await self.keepalive()
+                        continue
                 return
 
             messages.append({
@@ -242,7 +281,7 @@ class TurnRunner:
                     yield stream.tool_error(call["id"], content)
                 else:
                     outcome = await tools.execute(call["name"], call["arguments"],
-                                                  self.sandbox, self.backend)
+                                                  self.sandbox, self.backend, self.images)
                     content = outcome.text
                     if outcome.touched and outcome.touched not in self.result.touched:
                         self.result.touched.append(outcome.touched)
@@ -265,6 +304,10 @@ class TurnRunner:
                 self.result.reason = TYPECHECK_STRIKES
                 return
 
+        # Out of steps. During a critique the page was already answered for,
+        # so the turn still counts as done.
+        if self.result.critique_rounds and self.result.reason == ANSWERED:
+            return
         self.result.reason = STEP_LIMIT
 
 

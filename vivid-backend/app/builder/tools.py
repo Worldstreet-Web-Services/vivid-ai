@@ -11,6 +11,7 @@ import re
 from dataclasses import dataclass
 
 from app.builder.sandbox.base import PathError, Sandbox, SandboxError, safe_path
+from app.builder.images import ImageError, ImageMaker
 from app.builder.supabase import Management, SupabaseError
 from app.core.config import settings
 
@@ -95,8 +96,27 @@ SUPABASE_SCHEMAS: list[dict] = [
         ["key", "value"]),
 ]
 
+#: Offered when the image model is configured. Makes a picture and puts it
+#: in public/uploads like an upload, so the app can use it by path.
+IMAGE_SCHEMAS: list[dict] = [
+    _fn("generate_image",
+        "Create a photo-style image for the app when the user has not uploaded one: a "
+        "product shot, a hero image, a background. Describe the subject, setting and mood "
+        "in one or two sentences; the style (studio photography, clean background) is "
+        "added for you. The file lands at /uploads/<name> and is returned as a path to "
+        "use in an <img>. Not for logos or text: set the brand name in type instead.",
+        {"prompt": {"type": "string", "description": "What the picture shows."},
+         "name": {"type": "string",
+                  "description": "File name without extension, e.g. air-zoom-red."},
+         "aspect": {"type": "string", "enum": ["square", "landscape", "wide", "portrait"],
+                    "description": "square for products, wide for heroes (default square)."}},
+        ["prompt", "name"]),
+]
+
 NAMES = {s["function"]["name"] for s in SCHEMAS}
 SUPABASE_NAMES = {s["function"]["name"] for s in SUPABASE_SCHEMAS}
+IMAGE_NAMES = {s["function"]["name"] for s in IMAGE_SCHEMAS}
+_IMAGE_NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,60}$")
 
 _SLUG = re.compile(r"^[a-z][a-z0-9-]{1,62}$")
 _SECRET_NAME = re.compile(r"^[A-Z][A-Z0-9_]{1,63}$")
@@ -115,8 +135,13 @@ class Backend:
         return Management(self.token)
 
 
-def schemas_for(backend: "Backend | None") -> list[dict]:
-    return SCHEMAS + (SUPABASE_SCHEMAS if backend is not None else [])
+def schemas_for(backend: "Backend | None", images: "ImageMaker | None" = None) -> list[dict]:
+    out = list(SCHEMAS)
+    if images is not None:
+        out += IMAGE_SCHEMAS
+    if backend is not None:
+        out += SUPABASE_SCHEMAS
+    return out
 
 #: Commands the model may not run, whatever it says it is doing. Matched
 #: against the whole command line. Package installs, scripts and checks are
@@ -158,8 +183,19 @@ def truncate(text: str, limit: int | None = None) -> str:
 
 
 async def execute(name: str, args: dict, sandbox: Sandbox,
-                  backend: Backend | None = None) -> Outcome:
+                  backend: Backend | None = None,
+                  images: ImageMaker | None = None) -> Outcome:
     """Run one tool. Never raises for a problem the model can act on."""
+    if name in IMAGE_NAMES:
+        if images is None:
+            return Outcome("error: image generation is not available on this deployment; "
+                           "use a gradient block with the item's initial instead.")
+        try:
+            outcome = await _generate_image(args, images)
+        except ImageError as e:
+            outcome = Outcome(f"error: {e}")
+        outcome.text = truncate(outcome.text) or "(no output)"
+        return outcome
     if name in SUPABASE_NAMES:
         if backend is None:
             return Outcome(f"error: {name} needs a Supabase backend linked to this project.")
@@ -183,6 +219,21 @@ async def execute(name: str, args: dict, sandbox: Sandbox,
         outcome = Outcome(f"error: the sandbox failed: {e}")
     outcome.text = truncate(outcome.text) or "(no output)"
     return outcome
+
+
+async def _generate_image(args: dict, images: ImageMaker) -> Outcome:
+    prompt = str(args.get("prompt") or "").strip()
+    name = str(args.get("name") or "").strip().lower()
+    if len(prompt) < 8:
+        return Outcome("error: describe the picture in a sentence")
+    if not _IMAGE_NAME.match(name):
+        return Outcome("error: name must be a lowercase slug like air-zoom-red")
+    out = await images.make(prompt, name, str(args.get("aspect") or "square"))
+    dims = out["meta"].get("width")
+    size = f"{out['meta']['width']}x{out['meta']['height']}, " if dims else ""
+    return Outcome(f"Image ready at {out['path']} ({size}{out['bytes'] // 1024} KB). "
+                   f"Use it as <img src=\"{out['path']}\" ...> with a fixed aspect ratio. "
+                   f"{images.left} more this turn.", touched=None)
 
 
 # ---------------------------------------------------- supabase handlers

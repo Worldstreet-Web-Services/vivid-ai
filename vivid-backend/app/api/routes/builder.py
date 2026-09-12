@@ -41,8 +41,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
-from app.builder import (assets, blob, planning, publish, routing, secrets, snapshots,
-                         stream, supabase, tools, usage)
+from app.builder import (assets, blob, images, planning, publish, routing, secrets,
+                         snapshots, stream, supabase, tools, usage)
 from app.builder.loop import ModelCall, TurnRunner, turns
 from app.builder.planning import PlanRunner
 from app.builder.sandbox.base import PathError, SandboxError, safe_path
@@ -236,7 +236,10 @@ async def chat(project_id: str, body: ChatIn, request: Request,
             runner = TurnRunner(sandbox, stage, history, body.text, spec_md, recent,
                                 cancelled=cancel.is_set, backend=backend,
                                 assets_block=assets_block,
-                                keepalive=lambda: manager.touch(project_id))
+                                keepalive=lambda: manager.touch(project_id),
+                                project_id=project_id,
+                                images=(images.ImageMaker(project_id, sandbox)
+                                        if images.available() else None))
             async for part in runner.run():
                 collector.add(part)
                 yield stream.frame(part)
