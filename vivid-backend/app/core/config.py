@@ -281,6 +281,57 @@ class Settings(BaseSettings):
     GENERATION_RATE_LIMIT_PER_MINUTE: int = 20
     TOOL_RATE_LIMIT_PER_MINUTE: int = 60
 
+    # --- The app builder (app/builder) ----------------------------------
+    # Models are routed by STAGE, not by role: planning writes the spec,
+    # build is the first pass over an empty template, edit is every turn
+    # after that. One model owns a whole turn. All four are OpenRouter slugs
+    # and the builder always goes to OpenRouter, whatever MODEL_PROVIDER says,
+    # because no pod serves a tool-calling model with a million-token window.
+    # Slugs verified against openrouter.ai/api/v1/models on 2026-09-12.
+    PLAN_MODEL: str = "deepseek/deepseek-v4.1-flash"
+    BUILD_MODEL: str = "deepseek/deepseek-v4.1-flash"
+    EDIT_MODEL: str = "deepseek/deepseek-v4.1-flash"
+    # Takes over for one retry when a turn hits the step cap or fails the
+    # typecheck three times in a row. Different vendor on purpose: a model
+    # that keeps making the same mistake is not helped by more of itself.
+    FALLBACK_MODEL: str = "z-ai/glm-5.3-flash"
+    BUILDER_CONTEXT_TOKENS: int = 200_000
+    BUILDER_MAX_REPLY_TOKENS: int = 8192
+    BUILDER_TEMPERATURE: float = 0.2
+    # Tool calls per turn. The brief's cap; hitting it triggers the fallback.
+    BUILDER_MAX_STEPS: int = 20
+    # Consecutive typecheck failures after write_file/edit_file before the
+    # turn is handed to FALLBACK_MODEL.
+    BUILDER_TYPECHECK_STRIKES: int = 3
+    BUILDER_TOOL_RESULT_CHARS: int = 4000
+    BUILDER_TYPECHECK_ERROR_LINES: int = 40
+    # Chars of file tree + key files + recently touched files injected into
+    # the system prompt each turn.
+    BUILDER_CONTEXT_CHARS: int = 12_000
+    BUILDER_COMMAND_TIMEOUT: int = 60
+    BUILDER_TYPECHECK_TIMEOUT: int = 90
+    BUILDER_RATE_LIMIT_PER_MINUTE: int = 10
+
+    # Where the user's app runs. "e2b" is production; "local" runs the same
+    # template in a temp directory on this host (dev and tests only: it is
+    # not isolated from the backend process).
+    SANDBOX_DRIVER: str = "e2b"
+    E2B_API_KEY: str = ""
+    E2B_TEMPLATE: str = "vivid-web"
+    # Idle sandboxes are killed after this long without a turn or a preview
+    # request. E2B's own timeout is kept a little above it as a backstop for
+    # a backend that dies without sweeping.
+    BUILDER_SANDBOX_IDLE_SECONDS: int = 600
+    BUILDER_SANDBOX_TIMEOUT_SECONDS: int = 900
+    BUILDER_DEV_PORT: int = 5173
+    # How long get_or_create waits for the dev server to answer.
+    BUILDER_DEV_SERVER_WAIT_SECONDS: int = 60
+    # The template's source on disk, for the local driver and the eval.
+    # Relative paths resolve from the backend's working directory.
+    BUILDER_TEMPLATE_DIR: str = "../sandbox-templates/vivid-web"
+    # Where the local driver puts project directories.
+    BUILDER_LOCAL_ROOT: str = "/tmp/vivid-builder"
+
     # Limits
     RATE_LIMIT_PER_MINUTE: int = 20
     DEFAULT_CLIENT_ID: str = "vivid_web"

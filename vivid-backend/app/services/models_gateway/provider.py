@@ -207,6 +207,26 @@ def _openrouter(role: str) -> Endpoint:
                     model, missing, context_tokens=window)
 
 
+#: The app builder's turns. Not a switched role: nothing on the pods serves
+#: a tool-calling model with the window a build needs, so this always goes
+#: to OpenRouter, and the slug is chosen per stage by app/builder/routing.py.
+BUILDER = "builder"
+
+
+def openrouter_model(model: str, role: str = BUILDER,
+                     context_tokens: int = 0) -> Endpoint:
+    """An OpenRouter endpoint for an explicit slug.
+
+    For callers that pick their model by something other than MODEL_PROVIDER
+    (the builder routes by stage). Same headers, same attribution, same
+    routing preference as the switched roles; only the model differs.
+    """
+    missing = ("OPENROUTER_API_KEY is not set" if not settings.OPENROUTER_API_KEY
+               else "no model slug given" if not model else None)
+    return Endpoint(OPENROUTER, role, settings.OPENROUTER_BASE_URL.rstrip("/"),
+                    model, missing, context_tokens=context_tokens)
+
+
 def describe(role: str) -> dict:
     """What /health reports: enough for an operator to see at a glance which
     way the switch is set, and never the key."""

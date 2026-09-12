@@ -94,7 +94,9 @@ def _stream_error(chunk: dict) -> str | None:
 
 
 async def stream_chat(messages: list[dict], tools: list[dict],
-                      max_tokens: int | None = None):
+                      max_tokens: int | None = None,
+                      endpoint: provider.Endpoint | None = None,
+                      temperature: float | None = None):
     """Yields, in order:
         {"type": "token", "text": str}          assistant prose, as it arrives
         {"type": "tool_calls", "calls": [...]}  once, if the turn ended in calls
@@ -105,14 +107,20 @@ async def stream_chat(messages: list[dict], tools: list[dict],
     first fragment, the JSON arguments dribble in across later ones — so they
     are reassembled here and emitted only when the turn is complete.
     """
-    ep = _endpoint()
+    # The coding agent takes whatever the provider switch says serves CODE.
+    # The app builder passes its own endpoint: it routes by stage, and its
+    # models live on OpenRouter whatever the switch says.
+    ep = endpoint if endpoint is not None else _endpoint()
+    if not ep.configured:
+        raise CodeLLMUnavailable(ep.missing)
     payload = {
         "model": ep.model,
         "messages": messages,
         "tools": tools,
         "tool_choice": "auto",
         "max_tokens": max_tokens or settings.CODE_MAX_REPLY_TOKENS,
-        "temperature": settings.CODE_LLM_TEMPERATURE,
+        "temperature": (settings.CODE_LLM_TEMPERATURE
+                        if temperature is None else temperature),
         "top_p": settings.CODE_LLM_TOP_P,
         "stream": True,
         "stream_options": {"include_usage": True},

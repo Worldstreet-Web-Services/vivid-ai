@@ -1,0 +1,173 @@
+# Vivid Code builder: decisions
+
+The builder is the Lovable-style prompt-to-app product. This file records what
+was found in the repo, what the builder reuses, what it adds, and every choice
+the brief left open. It is updated as phases land.
+
+Scope for this work: **backend only** (`vivid-backend`). No change is made to
+`vivid-frontend`; the stream and REST contract is documented in
+`vivid-backend/docs/builder.md` for whoever builds the UI.
+
+## 1. What is here (found 2026-09-12)
+
+**Backend** (`vivid-backend`, Python 3.12, FastAPI 0.115)
+
+- The single gateway between every client and the models. Nothing else may
+  talk to a model host.
+- SQLAlchemy 2 async on asyncpg, pgvector. Schema is `Base.metadata.create_all`
+  plus idempotent `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` in
+  `app/db/session.py`. No Alembic.
+- Redis for rate limits and the arq worker. MinIO in dev through
+  `app/services/storage.py` (boto3, S3-compatible, so Cloudflare R2 works
+  with a different endpoint and credentials).
+- Auth: JWT access tokens and `vivid_` API keys share one bearer header and
+  resolve to a `Principal` in `app/api/deps.py`. Routes take
+  `get_current_user`.
+- Model access: `app/services/models_gateway/provider.py` picks the upstream
+  per role (our RunPod pods or OpenRouter). `code_llm.py` is an
+  OpenAI-compatible streaming adapter with native tool calling: fragment
+  reassembly, mid-stream error detection, transient retries. This is the
+  adapter the builder uses.
+- An agent loop already exists: `app/services/code_agent.py` runs a
+  native-tool loop over `/ws/code` where the tools execute in the user's
+  editor. Its shape (turn, execute, context trimming, retry) is the model for
+  the builder loop, but the builder's tools run in a cloud sandbox, so it is
+  a sibling, not a modification.
+- `sandbox/` at the repo root is a locked-down Python code-execution
+  container for the chat assistant's `run_code` tool. Not related to the
+  app sandbox.
+- `app/services/websites.py` extracts single-file HTML sites from chat
+  replies. It is the builder's predecessor and stays as it is.
+- Tests: pytest with `asyncio_mode = auto`, no Postgres. Route tests build a
+  small FastAPI app with the router and override `get_principal`; DB tests
+  use aiosqlite in memory.
+- Naming: "Vivid Code" already names the terminal/editor coding agent
+  (`vivid-code/`, `/ws/code`). Inside the backend the new product is the
+  `builder` package and the `/v1/builder` routes, so the two never collide.
+
+**Frontend** (`vivid-frontend`, Next.js 16.3.2 App Router, React 19)
+
+- Out of scope for this work. Noted only for the contract: chat today is a
+  browser websocket straight to FastAPI (`/ws`), and REST goes direct with the
+  JWT in the `Authorization` header. The builder's stream is plain HTTP so any
+  client, including a future `useChat`, can consume it.
+
+**Models**: `OPENROUTER_API_KEY` is already a setting, and the OpenRouter
+provider is already wired. Slugs from the brief verified against
+`openrouter.ai/api/v1/models` on 2026-09-12:
+
+| slot | slug | notes |
+|---|---|---|
+| plan / build / edit | `deepseek/deepseek-v4.1-flash` | text+image input, tools; $0.15/M in, $0.60/M out, $0.003/M cache read |
+| fallback | `z-ai/glm-5.3-flash` | tools; $0.075/M in, $0.25/M out |
+| comparison | `anthropic/claude-sonnet-5` | tools; $2/M in, $10/M out |
+
+## 2. Brief vs this repo
+
+The brief assumes a TypeScript orchestrator (Next route handlers, AI SDK,
+Drizzle, `@openrouter/ai-sdk-provider`). This repo's rule is that the FastAPI
+backend is the only thing that talks to a model host, and it already owns
+auth, storage, rate limits and a tool-calling adapter. So the *architecture*
+of the brief is kept and the *stack* maps onto what exists:
+
+| brief | here | why |
+|---|---|---|
+| route handlers in Next | routes in `app/api/routes/builder.py` | the backend is the sole gateway |
+| AI SDK `streamText` + `toUIMessageStreamResponse` | own loop + an encoder for the AI SDK **UI Message Stream v1** over SSE | same wire protocol, no TS runtime needed; a `useChat` client works unchanged |
+| `@openrouter/ai-sdk-provider` | `code_llm.stream_chat` against an OpenRouter endpoint | already handles streaming tool calls and failures |
+| Drizzle | SQLAlchemy models + `init_db` | one ORM in the service |
+| R2 client | boto3 through a builder blob client | R2 is S3-compatible; MinIO in dev |
+| `scripts/eval.ts` | `app/scripts/builder_eval.py` | same report, Python |
+
+Everything else in the brief (tools, prompt rules, context budget, step cap,
+routing by stage, fallback, snapshot-is-truth, phases) is unchanged.
+
+## 3. Reuse vs add
+
+Reused as-is: `deps.get_current_user`, `errors.APIError`, `provider.Endpoint`
+and `provider.scrub`, `code_llm.stream_chat` (gains an optional explicit
+endpoint), `storage`'s boto3 pattern, `rate_limit.check_bucket`,
+`init_db` for schema, `cryptography` (already a dependency) for secrets.
+
+Added under `vivid-backend/app/builder/`:
+
+```
+builder/
+  stream.py          UI Message Stream v1 encoder (SSE)
+  routing.py         stage -> OpenRouter endpoint (PLAN/BUILD/EDIT/FALLBACK_MODEL)
+  sandbox/
+    base.py          Sandbox interface + types
+    e2b.py           E2B driver (template "vivid-web")
+    local.py         local subprocess driver for dev and tests
+    manager.py       get_or_create(project), restore, wait for :5173, idle kill
+  tools.py           the six tools, executed against a Sandbox
+  context.py         file tree + key files + recently touched, 12k cap
+  prompt.py          static system prompt (< 120 lines) + injection
+  loop.py            the turn: model call, tool execution, step cap, fallback
+  snapshots.py       git commit -> tar -> blob store -> row      (phase 2)
+  usage.py           usage_events + OpenRouter pricing           (phase 2)
+  secrets.py         Fernet at rest                              (phase 2)
+  planning.py        ask_user / write_spec stage                  (phase 3)
+  supabase.py        Management API tools                         (phase 4)
+  publish.py         vite build -> Cloudflare Pages               (phase 5)
+  cloud.py           Vivid Cloud provisioning                     (phase 6)
+api/routes/builder.py   /v1/builder/...
+scripts/builder_eval.py
+```
+
+Template source lives in `sandbox-templates/vivid-web/` at the repo root
+(the Vite project plus the E2B template definition).
+
+## 4. Choices the brief left open
+
+1. **Sandbox driver switch.** `SANDBOX_DRIVER=e2b|local`. `local` runs the
+   same template in a temp directory on the host with `npm run dev`; it exists
+   so the loop can be developed and its pass criteria run without an E2B key,
+   and so unit tests never need the network. E2B is the production driver.
+2. **Transport.** `POST /v1/builder/projects/{id}/chat` answers
+   `text/event-stream` with `x-vercel-ai-ui-message-stream: v1`. Cancel is
+   `POST .../cancel` (a Redis flag the loop checks between steps and per
+   token). One turn per project at a time; a second request gets 409.
+3. **Message storage.** `builder_messages.parts` holds the UI message parts
+   exactly as streamed (text, tool, data parts), so a client can hydrate a
+   thread without re-deriving anything.
+4. **Schema up front.** All builder tables are created in phase 1 even though
+   only projects and messages are used then. The brief's own reason applies:
+   usage rows are cheap now and painful to retrofit.
+5. **Tables are separate** (`builder_*`). The assistant's `chats`/`messages`
+   are untouched; the two products have different rows and different
+   lifecycles.
+6. **Sandbox identity survives restarts.** The live sandbox id per project is
+   kept in Redis (`builder:sandbox:{project_id}`) with the last-activity time.
+   A backend restart reconnects instead of creating a second sandbox. An
+   asyncio sweeper in the app lifespan kills sandboxes idle 10 minutes.
+7. **Typecheck after writes** runs `npx tsc --noEmit -p .` in the sandbox with
+   a 60 s ceiling and returns the first 40 error lines, as the brief says. It
+   runs once per tool call, not once per turn, so the model sees the error
+   next to the edit that caused it.
+8. **Command blocklist** for `run_command`: anything touching `rm -rf /`,
+   `sudo`, `curl | sh`, `git push`, `npm publish`, `shutdown`, package
+   manager global installs, and any path outside the project. Package
+   installs are allowed (`npm install <pkg>`).
+9. **Pricing** for `usage_events.cost_usd` comes from OpenRouter's public
+   `/models` listing, cached for an hour, keyed by slug; cache-read tokens are
+   priced at the cache rate. If the listing is unreachable the row is written
+   with `cost_usd = NULL` and a warning, never with a guess.
+10. **Secrets at rest** use Fernet (`SECRETS_ENCRYPTION_KEY`, 32 url-safe
+    base64 bytes). Tool results and the stream never carry a secret value;
+    `set_secret` echoes only the key name.
+11. **Eval** is `python -m app.scripts.builder_eval --slot build=<slug>`,
+    reports steps, typecheck failures, tokens and cost per prompt, and writes
+    a JSON file so two runs can be diffed.
+
+## 5. Open questions (answered by assumption until told otherwise)
+
+1. E2B account: no `E2B_API_KEY` is present locally. Assumed: the key arrives
+   later; phase 1 is proven on the `local` driver and the E2B driver is
+   written against the SDK source, then verified when a key exists.
+2. R2 credentials: none present. Assumed: MinIO in dev (the existing S3
+   settings), R2 in production via `R2_*` settings.
+3. Plan-mode answers: the `ask_user` questions are persisted as a tool part;
+   the client answers by sending the next user message. Assumed acceptable.
+4. Cloud gating: a `plan` column on the existing `users` table (free/pro).
+   Assumed acceptable.
