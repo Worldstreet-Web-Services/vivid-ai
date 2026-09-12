@@ -654,3 +654,14 @@ def test_assets_upload_list_delete_and_prompting(client, monkeypatch, fake_manag
     assert client.get(f"/v1/builder/projects/{pid}/assets").json() == []
     assert not any(k.endswith("-air-max-90.png") for k in fake_blob)
     assert any(c.startswith("rm -f public/uploads/air-max-90.png") for c in fake_manager.sandbox.commands)
+
+
+def test_manual_snapshot(client, monkeypatch, fake_manager, fake_blob):
+    pid = client.post("/v1/builder/projects", json={"skip_plan": True}).json()["id"]
+    fake_manager.sandbox.files["src/App.tsx"] = "changed by hand"
+    r = client.post(f"/v1/builder/projects/{pid}/snapshots")
+    assert r.status_code == 200 and r.json()["seq"] == 1 and r.json()["summary"] == "manual snapshot"
+    # Nothing changed since: the latest snapshot comes back, no new row.
+    r = client.post(f"/v1/builder/projects/{pid}/snapshots")
+    assert r.status_code == 200 and r.json()["seq"] == 1
+    assert len(client.get(f"/v1/builder/projects/{pid}/snapshots").json()) == 1

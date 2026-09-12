@@ -112,7 +112,8 @@ async def run_variant(slug: str, spec: str, variant: str, do_publish: bool) -> d
     try:
         runner = TurnRunner(sandbox, routing.BUILD, [], "Build the first version from the spec.",
                             spec_md=spec, project_id=pid, critique=on,
-                            images=ImageMaker(pid, sandbox) if images_available() else None,
+                            images=(ImageMaker(pid, sandbox, limit=settings.BUILDER_IMAGES_FIRST_BUILD)
+                                    if images_available() else None),
                             keepalive=lambda: sandbox.touch())
         async for _ in runner.run():
             pass

@@ -17,6 +17,7 @@
     GET    /builder/projects/{id}/files      source file list
     GET    /builder/projects/{id}/files/{path}
     GET    /builder/projects/{id}/snapshots  one per turn that changed files
+    POST   /builder/projects/{id}/snapshots  take one now (after a failed auto-snapshot)
     POST   /builder/projects/{id}/snapshots/{seq}/restore
     GET    /builder/projects/{id}/usage      this project's metered totals
     POST   /builder/projects/{id}/supabase   link a Supabase project (byo)
@@ -238,7 +239,10 @@ async def chat(project_id: str, body: ChatIn, request: Request,
                                 assets_block=assets_block,
                                 keepalive=lambda: manager.touch(project_id),
                                 project_id=project_id,
-                                images=(images.ImageMaker(project_id, sandbox)
+                                images=(images.ImageMaker(
+                                    project_id, sandbox,
+                                    limit=(settings.BUILDER_IMAGES_FIRST_BUILD
+                                           if stage == routing.BUILD else None))
                                         if images.available() else None))
             async for part in runner.run():
                 collector.add(part)
@@ -685,6 +689,31 @@ async def list_snapshots(project_id: str, user: User = Depends(get_current_user)
                             .where(BuilderSnapshot.project_id == project_id)
                             .order_by(BuilderSnapshot.seq))
     return list(rows.scalars())
+
+
+@router.post("/projects/{project_id}/snapshots", response_model=SnapshotOut)
+async def take_snapshot(project_id: str, request: Request,
+                        user: User = Depends(get_current_user),
+                        db: AsyncSession = Depends(get_db)):
+    """Store the sandbox's files now. Normally every changing turn does
+    this; this is for when that failed (a timed-out read) and the work
+    exists only in the sandbox. 204 would hide the answer, so an unchanged
+    tree returns the latest snapshot instead."""
+    project = await _owned(project_id, user, db)
+    if turns.running(project_id):
+        raise APIError(409, "busy", "Wait for the running turn to finish first.")
+    sandbox = await _sandbox(project_id, request)
+    try:
+        row = await snapshots.take(db, sandbox, project, "manual snapshot")
+    except (snapshots.SnapshotError, SandboxError) as e:
+        log.error("manual snapshot for %s failed: %s", project_id, e)
+        raise APIError(503, "snapshot_failed", "The files could not be stored. Try again.")
+    await db.commit()
+    if row is None:
+        row = await snapshots.latest(db, project_id)
+        if row is None:
+            raise APIError(409, "nothing_to_snapshot", "Nothing has changed since the template.")
+    return row
 
 
 @router.post("/projects/{project_id}/snapshots/{seq}/restore", response_model=SnapshotOut)

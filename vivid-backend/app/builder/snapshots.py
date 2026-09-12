@@ -70,7 +70,13 @@ async def take(db: AsyncSession, sandbox: Sandbox, project: BuilderProject,
     result = await sandbox.run(f"tar -czf {tar} {excludes} . && rm -f {tar}.err", timeout=120)
     if not result.ok:
         raise SnapshotError(f"tar failed: {result.output[:300]}")
-    data = await sandbox.read_bytes(tar)
+    try:
+        data = await sandbox.read_bytes(tar)
+    except SandboxError as e:
+        # One retry: a large read over a flaky connection times out more
+        # often than the sandbox actually fails.
+        log.warning("snapshot read failed once (%s); retrying", e)
+        data = await sandbox.read_bytes(tar)
     await sandbox.run(f"rm -f {tar}", timeout=15)
     if len(data) > settings.BUILDER_SNAPSHOT_MAX_BYTES:
         raise SnapshotError(f"snapshot is {len(data)} bytes, over the limit")

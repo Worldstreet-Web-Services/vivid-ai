@@ -33,10 +33,13 @@ class ImageMaker:
     project_id: str
     sandbox: Sandbox
     made: list[str] = field(default_factory=list)
+    #: None = the per-turn setting; a first build passes the larger cap.
+    limit: int | None = None
 
     @property
     def left(self) -> int:
-        return settings.BUILDER_IMAGES_PER_TURN - len(self.made)
+        cap = self.limit if self.limit is not None else settings.BUILDER_IMAGES_PER_TURN
+        return cap - len(self.made)
 
     async def make(self, prompt: str, name: str, aspect: str = "square") -> dict:
         if self.left <= 0:

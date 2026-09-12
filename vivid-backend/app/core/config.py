@@ -420,7 +420,10 @@ class Settings(BaseSettings):
 
     # Pictures the builder generates for a project with no uploads, per
     # turn. Each costs about a third of a cent on the default image model.
+    # A first build seeds eight to twelve products and needs one each plus
+    # a hero; an edit rarely needs more than a few.
     BUILDER_IMAGES_PER_TURN: int = 6
+    BUILDER_IMAGES_FIRST_BUILD: int = 16
 
     # Limits
     RATE_LIMIT_PER_MINUTE: int = 20
