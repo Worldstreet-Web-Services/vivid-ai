@@ -123,6 +123,11 @@ class SandboxManager:
                 return sandbox
             log.info("sandbox %s for project %s is gone; replacing", sandbox.id, project_id)
             self._live.pop(project_id, None)
+            # It ran until it died; the session is still billable.
+            started = self._started.pop(project_id, None)
+            if started is not None:
+                await usage.record_sandbox(project_id, sandbox.id,
+                                           time.monotonic() - started)
         sandbox = await self._reconnect(project_id, redis)
         if sandbox is not None:
             self._live[project_id] = sandbox

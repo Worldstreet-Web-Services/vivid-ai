@@ -54,13 +54,22 @@ async def test_get_or_create_reuses_and_remembers(manager, driver):
     assert manager.peek("p1") is a and manager.peek("p2") is None
 
 
-async def test_dead_sandbox_is_replaced(manager, driver):
+async def test_dead_sandbox_is_replaced_and_metered(manager, driver, monkeypatch):
     redis = FakeRedis()
+    metered = []
+
+    async def record_sandbox(project_id, sandbox_id, seconds):
+        metered.append((project_id, sandbox_id))
+    monkeypatch.setattr(manager_mod.usage, "record_sandbox", record_sandbox)
+
     a = await manager.get_or_create("p1", redis)
     a.killed = True                                  # died on its own
     b = await manager.get_or_create("p1", redis)
     assert b is not a and b.id == "sb_2"
     assert redis.strings["builder:sandbox:p1"] == "sb_2"
+    assert metered == [("p1", "sb_1")]
+    await manager.kill("p1", redis)
+    assert metered == [("p1", "sb_1"), ("p1", "sb_2")]
 
 
 async def test_restore_runs_before_handover_and_failure_kills(manager, driver):

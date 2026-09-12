@@ -22,6 +22,9 @@ POST   /v1/builder/projects/{id}/cancel                        -> {cancelled}
 GET    /v1/builder/projects/{id}/preview                       -> {url, sandbox_id, driver}
 GET    /v1/builder/projects/{id}/files                         -> {files: [path]}
 GET    /v1/builder/projects/{id}/files/{path}                  -> {path, content}
+GET    /v1/builder/projects/{id}/snapshots                     -> [snapshot]
+POST   /v1/builder/projects/{id}/snapshots/{seq}/restore       -> snapshot
+GET    /v1/builder/projects/{id}/usage                         -> usage totals
 ```
 
 Errors use the backend's envelope (`{"error": {"code", "message"}}`). Codes a
@@ -51,6 +54,7 @@ Parts, in the order a turn produces them:
 ... more steps ...
 {"type":"data-notice","data":{"text":"Retrying with a different model.","reason":"step_limit"}}
 {"type":"data-usage","data":{"model":"...","steps":7,"tokens_in":..,"tokens_out":..,"reason":"answered"}}
+{"type":"data-snapshot","data":{"id":"...","seq":3}}   after finish, when the turn changed files
 {"type":"error","errorText":"..."}                   the turn failed; stream still ends normally
 {"type":"abort","reason":"cancelled by the user"}
 {"type":"finish"}
@@ -75,6 +79,27 @@ and `step-start`, `data-*` parts are kept in order. The user's own message is
 a single text part. A thread reloaded from here is the same shape a client
 holds after watching the stream.
 
+## Versions
+
+Every turn that changes a file ends with a snapshot: a git commit in the
+sandbox, a tarball without node_modules stored in R2, and a row with a
+`seq` starting at 1. The stream announces it as a `data-snapshot` part and
+`GET .../snapshots` lists them with the turn's summary. The sandbox is
+disposable: when it is gone (idle, expired, or the backend restarted past
+its lifetime), the next `preview` or `chat` starts a fresh one and restores
+the project's current snapshot into it, reinstalling packages only if
+package.json changed. `POST .../snapshots/{seq}/restore` makes an older
+version current and, if a sandbox is live, puts its files there at once; the
+next snapshot continues the sequence, so going back loses nothing.
+
+## Usage
+
+`GET .../usage` totals the project's ledger: model calls and tokens (priced
+from OpenRouter's public list; `cost_usd` is the sum of what was priceable),
+sandbox seconds (recorded when a sandbox is killed or found dead), and
+snapshot bytes. Rows are written per model call, per sandbox session and
+per snapshot in `builder_usage_events`.
+
 ## Models and configuration
 
 ```
@@ -86,6 +111,9 @@ FALLBACK_MODEL       one retry on step cap / 3 typecheck failures   default z-ai
 SANDBOX_DRIVER       e2b (production) | local (dev)
 E2B_API_KEY, E2B_TEMPLATE=vivid-web
 BUILDER_TEMPLATE_DIR path to sandbox-templates/vivid-web (local driver, eval)
+R2_ENDPOINT or R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET, R2_PREFIX
+                     snapshot store; empty falls back to the S3_* settings (MinIO in dev)
+SECRETS_ENCRYPTION_KEY  Fernet key for per-project secrets (phase 4 uses it)
 ```
 
 A turn is capped at `BUILDER_MAX_STEPS` (20) tool calls. If the primary model

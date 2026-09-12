@@ -198,3 +198,24 @@ silently (the assistant message is now stored before `[DONE]`).
 Known gap, by design until phase 2: a sandbox that dies (idle kill, the E2B
 lifetime, a backend restart past it) comes back as a fresh template, so the
 app built so far is lost. Snapshots are the fix.
+
+## 7. Phase 2 result (2026-09-12)
+
+R2 bucket and key were provided; objects live under `R2_PREFIX` because the
+bucket is shared with another product. Run live on E2B and R2:
+
+| step | result |
+|---|---|
+| build turn, notes app | 5 steps, snapshot seq 1, 74 KB |
+| edit turn, heading change | 2 steps, snapshot seq 2, 76 KB |
+| sandbox killed out of band, then `preview` | fresh sandbox restored from seq 2 in 5 s, App.tsx identical |
+| `restore` to seq 1 | 3 s, App.tsx back to the build version, no npm install |
+| next turn after the restore | snapshot seq 3 |
+| `usage` | 12 model calls, 70k tokens, $0.0094, 227 KB storage |
+| `DELETE` project | rows cascade, R2 prefix emptied |
+
+Choices made here: a chat-only turn stores no snapshot (git reports no
+change); the snapshot is taken in the same transaction as the assistant
+message, and a snapshot failure is logged but does not fail the turn (the
+next changing turn captures the work); sandbox sessions are metered when a
+sandbox is killed or found dead, so seconds appear a little after the fact.
