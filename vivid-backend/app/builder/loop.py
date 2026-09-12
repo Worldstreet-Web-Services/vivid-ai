@@ -30,8 +30,9 @@ TYPECHECK_STRIKES = "typecheck_strikes"
 CANCELLED = "cancelled"
 ERROR = "error"
 
-#: Attempt outcomes that earn a retry on the fallback model.
-RETRYABLE = {STEP_LIMIT, TYPECHECK_STRIKES}
+#: Attempt outcomes that earn a retry on the fallback model. ERROR is the
+#: primary's stream failing repeatedly; the fallback is another vendor.
+RETRYABLE = {STEP_LIMIT, TYPECHECK_STRIKES, ERROR}
 
 RETRY_NOTICE = "Retrying with a different model."
 
@@ -62,6 +63,64 @@ class TurnResult:
     @property
     def tokens_out(self) -> int:
         return sum((c.usage or {}).get("completion_tokens", 0) for c in self.calls)
+
+
+STREAM_RETRY_NOTICE = "The model connection dropped; retrying."
+#: Seconds before restarting a broken stream, multiplied by the attempt.
+_RETRY_BACKOFF = 1.5
+
+
+class ModelStep:
+    """One model call streamed as parts, restarted whole if the stream
+    breaks. Providers behind OpenRouter drop long responses often enough
+    that a first build would fail one time in a handful without this.
+    Restarting is safe: the conversation is not touched until the call
+    completes, so a half-streamed reply leaves no trace. The prose the user
+    already saw is closed with a notice."""
+
+    def __init__(self, messages: list[dict], schemas: list[dict],
+                 endpoint: provider.Endpoint) -> None:
+        self.messages, self.schemas, self.endpoint = messages, schemas, endpoint
+        self.text = ""
+        self.calls: list[dict] = []
+        self.usage: dict | None = None
+        self.failed: CodeLLMUnavailable | None = None
+
+    async def run(self) -> AsyncIterator[dict]:
+        attempts = max(1, settings.CODE_STREAM_RETRIES)
+        for attempt in range(1, attempts + 1):
+            text_id, started, parts, calls, usage = stream.new_id("txt"), False, [], [], None
+            try:
+                async for ev in code_llm.stream_chat(
+                        self.messages, self.schemas, endpoint=self.endpoint,
+                        max_tokens=settings.BUILDER_MAX_REPLY_TOKENS,
+                        temperature=settings.BUILDER_TEMPERATURE):
+                    if ev["type"] == "token":
+                        if not started:
+                            started = True
+                            yield stream.text_start(text_id)
+                        parts.append(ev["text"])
+                        yield stream.text_delta(text_id, ev["text"])
+                    elif ev["type"] == "tool_calls":
+                        calls = ev["calls"]
+                    elif ev["type"] == "done":
+                        usage = ev.get("usage")
+            except CodeLLMUnavailable as e:
+                if started:
+                    yield stream.text_end(text_id)
+                if attempt == attempts:
+                    log.warning("model call failed after %d attempts: %s", attempts, e)
+                    self.failed = e
+                    return
+                log.warning("stream broke (attempt %d/%d), restarting: %s", attempt, attempts, e)
+                yield stream.data("notice", {"text": STREAM_RETRY_NOTICE,
+                                             "reason": "stream_retry", "attempt": attempt})
+                await asyncio.sleep(_RETRY_BACKOFF * attempt)
+                continue
+            if started:
+                yield stream.text_end(text_id)
+            self.text, self.calls, self.usage = "".join(parts).strip(), calls, usage
+            return
 
 
 class TurnRunner:
@@ -104,7 +163,7 @@ class TurnRunner:
                 yield part
             outcome = self.result.reason
 
-        if outcome in RETRYABLE:
+        if outcome in RETRYABLE and outcome != ERROR:
             # Both models ran out of road. Say so in the thread rather than
             # ending on a tool result the user cannot read.
             text_id = stream.new_id("txt")
@@ -137,36 +196,15 @@ class TurnRunner:
             self.result.steps += 1
             yield stream.start_step()
 
-            text_id = stream.new_id("txt")
-            started = False
-            text_parts: list[str] = []
-            calls: list[dict] = []
-            try:
-                async for ev in code_llm.stream_chat(
-                        messages, tools.SCHEMAS, endpoint=endpoint,
-                        max_tokens=settings.BUILDER_MAX_REPLY_TOKENS,
-                        temperature=settings.BUILDER_TEMPERATURE):
-                    if ev["type"] == "token":
-                        if not started:
-                            started = True
-                            yield stream.text_start(text_id)
-                        text_parts.append(ev["text"])
-                        yield stream.text_delta(text_id, ev["text"])
-                    elif ev["type"] == "tool_calls":
-                        calls = ev["calls"]
-                    elif ev["type"] == "done":
-                        self.result.calls.append(
-                            ModelCall(endpoint.model, stage, ev.get("usage")))
-            except CodeLLMUnavailable as e:
-                log.warning("builder model call failed: %s", e)
-                if started:
-                    yield stream.text_end(text_id)
-                yield stream.error(e.public)
+            call_step = ModelStep(messages, tools.SCHEMAS, endpoint)
+            async for part in call_step.run():
+                yield part
+            if call_step.failed is not None:
+                yield stream.error(call_step.failed.public)
                 self.result.reason = ERROR
                 return
-            if started:
-                yield stream.text_end(text_id)
-            text = "".join(text_parts).strip()
+            self.result.calls.append(ModelCall(endpoint.model, stage, call_step.usage))
+            text, calls = call_step.text, call_step.calls
 
             if not calls:
                 messages.append({"role": "assistant", "content": text})

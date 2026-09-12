@@ -11,7 +11,8 @@ All routes take the usual bearer token (a session or a `vivid_` key) and
 only ever see the caller's own projects.
 
 ```
-POST   /v1/builder/projects                 {name?}            -> project
+POST   /v1/builder/projects                 {name?, skip_plan?} -> project (mode: plan)
+POST   /v1/builder/projects/{id}/build      leave plan mode    -> project (mode: build)
 GET    /v1/builder/projects                                    -> [project]
 GET    /v1/builder/projects/{id}                               -> project
 PATCH  /v1/builder/projects/{id}            {name?, spec_md?}  -> project
@@ -52,6 +53,7 @@ Parts, in the order a turn produces them:
 {"type":"tool-output-error","toolCallId":"...","errorText":"error: ..."}
 {"type":"finish-step"}
 ... more steps ...
+{"type":"data-notice","data":{"text":"The model connection dropped; retrying.","reason":"stream_retry","attempt":1}}
 {"type":"data-notice","data":{"text":"Retrying with a different model.","reason":"step_limit"}}
 {"type":"data-usage","data":{"model":"...","steps":7,"tokens_in":..,"tokens_out":..,"reason":"answered"}}
 {"type":"data-snapshot","data":{"id":"...","seq":3}}   after finish, when the turn changed files
@@ -78,6 +80,31 @@ text deltas become one `{"type":"text","text"}` part, a tool call becomes one
 and `step-start`, `data-*` parts are kept in order. The user's own message is
 a single text part. A thread reloaded from here is the same shape a client
 holds after watching the stream.
+
+## Plan mode
+
+A new project starts in `mode: "plan"` (pass `skip_plan: true` to start
+building at once). In plan mode a chat turn runs on `PLAN_MODEL` with two
+tools and no sandbox, so it costs nothing but tokens:
+
+- `ask_user`: two to six questions, each with two to four options and, by
+  default, free text. It ends the turn. Render the `tool-ask_user` part's
+  `input.questions` as tappable cards and send the answers as the next user
+  message in plain text ("Customers. Yes, sign in. Blue and white.").
+- `write_spec`: markdown with the headings Goal, Users, Pages, Data model,
+  Integrations, Out of scope. The spec is stored on the project (`spec_md`)
+  and the stream carries a `data-spec` part with the markdown.
+
+`POST .../chat` in plan mode accepts `images` (up to four https or data
+URLs) as reference screenshots; the plan model reads them. The user edits
+the spec with `PATCH {spec_md}` and starts the build with `POST .../build`.
+From then on every turn runs on the build or edit model with the spec in
+its prompt, and `spec.md` in the sandbox mirrors it.
+
+Plan-mode parts, in order: `start`, `start-step`, optional text,
+`tool-input-available` (ask_user or write_spec), `tool-output-available`,
+`finish-step`, then for a written spec `data-spec`, then `data-usage` with
+`"mode": "plan"`, `finish`, `[DONE]`. Plan turns never produce a snapshot.
 
 ## Versions
 
@@ -116,10 +143,13 @@ R2_ENDPOINT or R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET,
 SECRETS_ENCRYPTION_KEY  Fernet key for per-project secrets (phase 4 uses it)
 ```
 
-A turn is capped at `BUILDER_MAX_STEPS` (20) tool calls. If the primary model
-hits the cap or fails the typecheck `BUILDER_TYPECHECK_STRIKES` (3) times in a
-row, the turn is retried once on `FALLBACK_MODEL`, and the stream says so with
-a `data-notice` part and a line of text.
+A turn is capped at `BUILDER_MAX_STEPS` (20) tool calls. A model call whose
+stream breaks is restarted up to `CODE_STREAM_RETRIES` times (a `data-notice`
+with reason `stream_retry`; the half-streamed text is closed and the
+conversation keeps only completed calls). If the primary model hits the step
+cap, fails the typecheck `BUILDER_TYPECHECK_STRIKES` (3) times in a row, or
+cannot be reached at all, the turn is retried once on `FALLBACK_MODEL`, and
+the stream says so with a `data-notice` part and a line of text.
 
 ## The sandbox
 

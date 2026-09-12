@@ -219,3 +219,22 @@ change); the snapshot is taken in the same transaction as the assistant
 message, and a snapshot failure is logged but does not fail the turn (the
 next changing turn captures the work); sandbox sessions are metered when a
 sandbox is killed or found dead, so seconds appear a little after the fact.
+
+## 8. Phase 3 choices (2026-09-12)
+
+- `mode` column on projects: `plan` for new rows, `build` after
+  `POST .../build`; rows from before phase 3 default to `build` (they skip
+  plan mode, as the brief asks). `skip_plan` on create is for developers
+  who know what they want.
+- Plan turns run without a sandbox. Nothing is created on E2B until the
+  build starts, so an abandoned idea costs tokens only.
+- `ask_user` ends the turn; the answers are the next user message in plain
+  text. The stored tool part holds the questions, so a client can render
+  cards from the thread and the model's history shows what it asked.
+- The spec is validated for the six headings before it is accepted; a bad
+  spec goes back to the model as an error result.
+- `spec.md` is rewritten in the sandbox at the start of any build turn where
+  it differs from the project's spec (covers an edited spec and a fresh
+  sandbox). It rides along in the next snapshot.
+- Reference images: `images` on the chat body, forwarded as `image_url`
+  parts in plan mode only.

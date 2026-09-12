@@ -56,6 +56,7 @@ class Scripted:
 def models(monkeypatch):
     monkeypatch.setattr(settings, "OPENROUTER_API_KEY", "k")
     monkeypatch.setattr(settings, "PLAN_MODEL", "vendor/planner")
+    monkeypatch.setattr(settings, "CODE_STREAM_RETRIES", 1)
 
 
 def install(monkeypatch, script):

@@ -16,9 +16,7 @@ from dataclasses import dataclass, field
 from typing import AsyncIterator, Callable
 
 from app.builder import routing, stream
-from app.core.config import settings
-from app.services.models_gateway import code_llm
-from app.services.models_gateway.code_llm import CodeLLMUnavailable
+from app.builder.loop import ModelStep
 
 log = logging.getLogger("vivid.builder.planning")
 
@@ -208,32 +206,15 @@ class PlanRunner:
                 break
             self.result.steps += 1
             yield stream.start_step()
-            text_id, started, text_parts, calls = stream.new_id("txt"), False, [], []
-            try:
-                async for ev in code_llm.stream_chat(
-                        messages, SCHEMAS, endpoint=endpoint,
-                        max_tokens=settings.BUILDER_MAX_REPLY_TOKENS,
-                        temperature=settings.BUILDER_TEMPERATURE):
-                    if ev["type"] == "token":
-                        if not started:
-                            started = True
-                            yield stream.text_start(text_id)
-                        text_parts.append(ev["text"])
-                        yield stream.text_delta(text_id, ev["text"])
-                    elif ev["type"] == "tool_calls":
-                        calls = ev["calls"]
-                    elif ev["type"] == "done":
-                        self.result.calls.append((endpoint.model, ev.get("usage")))
-            except CodeLLMUnavailable as e:
-                log.warning("plan model call failed: %s", e)
-                if started:
-                    yield stream.text_end(text_id)
-                yield stream.error(e.public)
+            call_step = ModelStep(messages, SCHEMAS, endpoint)
+            async for part in call_step.run():
+                yield part
+            if call_step.failed is not None:
+                yield stream.error(call_step.failed.public)
                 self.result.reason = ERROR
                 break
-            if started:
-                yield stream.text_end(text_id)
-            text = "".join(text_parts).strip()
+            self.result.calls.append((endpoint.model, call_step.usage))
+            text, calls = call_step.text, call_step.calls
 
             if not calls:
                 messages.append({"role": "assistant", "content": text})

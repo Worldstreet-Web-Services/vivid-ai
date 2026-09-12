@@ -45,6 +45,8 @@ def models(monkeypatch):
     monkeypatch.setattr(settings, "FALLBACK_MODEL", "vendor/fallback")
     monkeypatch.setattr(settings, "BUILDER_MAX_STEPS", 3)
     monkeypatch.setattr(settings, "BUILDER_TYPECHECK_STRIKES", 2)
+    monkeypatch.setattr(settings, "CODE_STREAM_RETRIES", 2)
+    monkeypatch.setattr(loop, "_RETRY_BACKOFF", 0)
 
 
 def install(monkeypatch, script) -> ScriptedModel:
@@ -145,7 +147,52 @@ async def test_cancel_stops_between_steps(monkeypatch):
     assert parts[-1]["type"] == "finish"
 
 
-async def test_model_failure_is_an_error_part(monkeypatch):
+async def test_broken_stream_is_restarted(monkeypatch):
+    """The first attempt dies mid-prose; the restart answers. The half
+    reply is closed, a notice says why, and the conversation holds only
+    the completed call."""
+    model = ScriptedModel([("Hello again.", [])])
+    calls = {"n": 0}
+
+    async def flaky(messages, tools, max_tokens=None, endpoint=None, temperature=None):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            yield {"type": "token", "text": "Half a"}
+            raise code_llm.CodeLLMUnavailable("stream interrupted")
+        async for ev in model.stream_chat(messages, tools, max_tokens, endpoint, temperature):
+            yield ev
+    monkeypatch.setattr(code_llm, "stream_chat", flaky)
+    runner = TurnRunner(FakeSandbox({"src/App.tsx": "x"}), routing.BUILD, [], "hi")
+    parts, c = await collect(runner)
+    assert runner.result.reason == loop.ANSWERED and not runner.result.retried
+    assert runner.result.model == "vendor/primary" and calls["n"] == 2
+    notices = [p for p in parts if p["type"] == "data-notice"]
+    assert notices[0]["data"]["reason"] == "stream_retry"
+    texts = [p["text"] for p in c.parts if p["type"] == "text"]
+    assert texts == ["Half a", "Hello again."]
+    assert len(model.requests[0]["messages"]) == 2      # system + user, no half reply
+
+
+async def test_dead_primary_falls_back_to_the_other_vendor(monkeypatch):
+    seen = []
+
+    async def broken(messages, tools, max_tokens=None, endpoint=None, temperature=None):
+        seen.append(endpoint.model)
+        if endpoint.model == "vendor/primary":
+            raise code_llm.CodeLLMUnavailable("upstream 502")
+        yield {"type": "token", "text": "Fallback here."}
+        yield {"type": "done", "finish_reason": "stop", "usage": None}
+    monkeypatch.setattr(code_llm, "stream_chat", broken)
+    runner = TurnRunner(FakeSandbox({"src/App.tsx": "x"}), routing.BUILD, [], "hi")
+    parts, c = await collect(runner)
+    assert seen == ["vendor/primary", "vendor/primary", "vendor/fallback"]
+    assert runner.result.reason == loop.ANSWERED and runner.result.retried
+    assert runner.result.model == "vendor/fallback"
+    assert [p["type"] for p in parts if p["type"] == "error"] == ["error"]
+    assert c.text().endswith("Fallback here.")
+
+
+async def test_both_vendors_dead_is_an_error(monkeypatch):
     async def broken(*a, **k):
         raise code_llm.CodeLLMUnavailable("upstream 502")
         yield  # pragma: no cover
@@ -153,8 +200,9 @@ async def test_model_failure_is_an_error_part(monkeypatch):
     runner = TurnRunner(FakeSandbox({"src/App.tsx": "x"}), routing.BUILD, [], "hi")
     parts, _ = await collect(runner)
     errors = [p for p in parts if p["type"] == "error"]
-    assert errors and "unavailable" in errors[0]["errorText"]
-    assert runner.result.reason == loop.ERROR and not runner.result.retried
+    assert len(errors) == 2 and "unavailable" in errors[0]["errorText"]
+    assert runner.result.reason == loop.ERROR and runner.result.retried
+    assert parts[-1]["type"] == "finish"
 
 
 async def test_bad_tool_arguments_go_back_to_the_model(monkeypatch):
