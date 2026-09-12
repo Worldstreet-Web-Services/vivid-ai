@@ -368,3 +368,14 @@ linked, eight or more seeded items with images, every recipe section, admin
 reachable) and keeps edits minimal; first builds get 40 steps; after the
 answer a completeness review compares the app with the spec and fills gaps
 before the visual critique; recipes carry explicit minimums.
+
+### First designed result (2026-09-12)
+
+Leather-bag store, no uploads, design skill and critique on, images
+generated: https://adire-and-hide-32ea78.vivid-apps.pages.dev. 13 steps, 37
+tool calls (7 images, 6 kept), 21 minutes, one critique round that fixed the
+phone hero crop and the mobile menu. Wordmark, editorial serif, warm palette,
+real product photography, trust strip, footer with address and hours; phone
+layout stacks cleanly. Built before the completeness rules, so five products
+rather than eight or more. Wall time is the cost to watch: a first build
+with images and a critique is 15 to 25 minutes on the current models.
