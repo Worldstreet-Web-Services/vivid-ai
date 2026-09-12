@@ -56,3 +56,24 @@ class FilesOut(BaseModel):
 
 class CancelOut(BaseModel):
     cancelled: bool
+
+
+class SnapshotOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    seq: int
+    commit_sha: str | None
+    summary: str | None
+    size_bytes: int
+    created_at: datetime
+
+
+class UsageOut(BaseModel):
+    since: str | None
+    model_calls: int
+    tokens: int
+    sandbox_seconds: float
+    storage_bytes: int
+    cost_usd: float
+    by_kind: dict

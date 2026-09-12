@@ -332,6 +332,29 @@ class Settings(BaseSettings):
     # Where the local driver puts project directories.
     BUILDER_LOCAL_ROOT: str = "/tmp/vivid-builder"
 
+    # Snapshots: one tarball per turn in Cloudflare R2 (S3-compatible). Empty
+    # R2 settings fall back to the S3_* storage above (MinIO in dev), so the
+    # builder works on a laptop with no Cloudflare account. The endpoint can
+    # be given outright or derived from the account id.
+    R2_ENDPOINT: str = ""
+    R2_ACCOUNT_ID: str = ""
+    R2_ACCESS_KEY_ID: str = ""
+    R2_SECRET_ACCESS_KEY: str = ""
+    R2_BUCKET: str = ""
+    # Key prefix inside the bucket, so a bucket shared with anything else
+    # keeps the builder's objects in one folder.
+    R2_PREFIX: str = "vivid-builder/"
+    # Snapshot tarballs above this are refused (node_modules leaking in, or
+    # a user uploading media into src). 64 MB.
+    BUILDER_SNAPSHOT_MAX_BYTES: int = 64 * 1024 * 1024
+    # `npm install` inside the sandbox after a restore whose package.json
+    # differs from the template's.
+    BUILDER_INSTALL_TIMEOUT: int = 180
+    # Fernet key (44 url-safe base64 chars) for per-project secrets at rest:
+    #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    # Empty disables everything that stores a secret.
+    SECRETS_ENCRYPTION_KEY: str = ""
+
     # Limits
     RATE_LIMIT_PER_MINUTE: int = 20
     DEFAULT_CLIENT_ID: str = "vivid_web"

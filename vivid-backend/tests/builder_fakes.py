@@ -4,6 +4,7 @@ Files live in a dict; commands are answered by a script the test sets up.
 The typecheck is the one command the tools care about, so it is scripted by
 name: `fake.tsc_output = "..."` makes the next typecheck fail with that text.
 """
+import json
 import posixpath
 
 from app.builder.sandbox.base import RunResult, Sandbox, safe_path
@@ -16,12 +17,19 @@ class FakeSandbox(Sandbox):
     def __init__(self, files: dict[str, str] | None = None) -> None:
         self.id = "fake_1"
         self.files: dict[str, str] = dict(files or {})
+        #: Absolute-path binary files (tarballs the snapshot code moves).
+        self.blobs: dict[str, bytes] = {}
         self.commands: list[str] = []
         self.tsc_output: str = ""
         self.killed = False
         self.log = "vite ready\n"
         #: command substring -> RunResult, checked in order.
         self.responses: list[tuple[str, RunResult]] = []
+        #: The template commit; the first turn always changes something.
+        self.committed: dict[str, str] = {}
+        self.commits = 0
+        self.restored = 0
+        self.installs = 0
 
     async def read_file(self, path: str) -> str:
         path = safe_path(path)
@@ -31,6 +39,16 @@ class FakeSandbox(Sandbox):
 
     async def write_file(self, path: str, content: str) -> None:
         self.files[safe_path(path)] = content
+
+    async def read_bytes(self, path: str) -> bytes:
+        if path in self.blobs:
+            return self.blobs[path]
+        if path.startswith("/"):
+            raise FileNotFoundError(path)
+        return (await self.read_file(path)).encode()
+
+    async def write_bytes(self, path: str, data: bytes) -> None:
+        self.blobs[path] = data
 
     async def list_files(self) -> list[str]:
         return sorted(self.files)
@@ -44,6 +62,27 @@ class FakeSandbox(Sandbox):
             if self.tsc_output:
                 return RunResult(2, self.tsc_output, "")
             return RunResult(0, "", "")
+        # Enough of git, tar and md5sum for the snapshot code.
+        if cmd.startswith("git add -A"):
+            changed = self.files != self.committed
+            self.committed = dict(self.files)
+            self.commits += 0 if not changed else 1
+            sha = f"sha{self.commits}"
+            return RunResult(0, ("NOCHANGE\n" if not changed else "") + sha + "\n", "")
+        if cmd.startswith("tar -czf "):
+            path = cmd.split()[2]
+            self.blobs[path] = json.dumps(self.files).encode()
+            return RunResult(0, "", "")
+        if "tar -xzf " in cmd:
+            path = cmd.split("tar -xzf ")[1].split()[0]
+            self.files = json.loads(self.blobs[path].decode())
+            self.restored += 1
+            return RunResult(0, "", "")
+        if cmd.startswith("md5sum package.json"):
+            return RunResult(0, f"{hash(self.files.get('package.json', ''))}  package.json\n", "")
+        if cmd.startswith("npm install"):
+            self.installs += 1
+            return RunResult(0, "added 1 package", "")
         for needle, result in self.responses:
             if needle in cmd:
                 return result

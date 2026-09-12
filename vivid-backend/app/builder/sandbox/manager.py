@@ -19,6 +19,7 @@ from typing import Awaitable, Callable
 
 import httpx
 
+from app.builder import usage
 from app.builder.sandbox.base import Sandbox, SandboxError
 from app.core.config import settings
 
@@ -37,6 +38,9 @@ class SandboxManager:
     def __init__(self) -> None:
         self._live: dict[str, Sandbox] = {}
         self._seen: dict[str, float] = {}
+        #: When this process started (or reconnected to) each sandbox; the
+        #: metered session is from here to the kill.
+        self._started: dict[str, float] = {}
         self._locks: dict[str, asyncio.Lock] = {}
 
     # ---------------------------------------------------------------- api
@@ -60,7 +64,7 @@ class SandboxManager:
                 await sandbox.kill()
                 raise
             self._live[project_id] = sandbox
-            self._seen[project_id] = time.monotonic()
+            self._seen[project_id] = self._started[project_id] = time.monotonic()
             await self._remember(redis, project_id, sandbox.id)
             return sandbox
 
@@ -77,12 +81,16 @@ class SandboxManager:
     async def kill(self, project_id: str, redis) -> None:
         sandbox = self._live.pop(project_id, None)
         self._seen.pop(project_id, None)
+        started = self._started.pop(project_id, None)
         if sandbox is None:
             # Maybe another process, or a previous life of this one, made it.
             sandbox = await self._reconnect(project_id, redis)
         if sandbox is not None:
             await sandbox.kill()
             log.info("sandbox %s for project %s killed", sandbox.id, project_id)
+            if started is not None:
+                await usage.record_sandbox(project_id, sandbox.id,
+                                           time.monotonic() - started)
         await self._forget(redis, project_id)
 
     async def sweep(self, redis) -> None:
@@ -118,6 +126,7 @@ class SandboxManager:
         sandbox = await self._reconnect(project_id, redis)
         if sandbox is not None:
             self._live[project_id] = sandbox
+            self._started[project_id] = time.monotonic()
         return sandbox
 
     async def _reconnect(self, project_id: str, redis) -> Sandbox | None:

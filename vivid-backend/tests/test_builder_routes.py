@@ -17,6 +17,7 @@ from app.api import deps
 from app.api.deps import Principal, get_db, get_principal
 from app.api.routes import builder as builder_routes
 from app.api.routes.builder import router
+from app.builder import blob
 from app.builder import loop as loop_mod
 from app.builder.sandbox.base import SandboxError
 from app.core import errors
@@ -42,13 +43,22 @@ class FakeManager:
         self.sandbox = FakeSandbox({"src/App.tsx": "x", "src/main.tsx": "y",
                                     "package.json": "{}"})
         self.fail = False
+        #: True until the first get_or_create, like a sandbox that does not exist yet.
+        self.fresh = True
         self.killed: list[str] = []
         self.touched: list[str] = []
 
     async def get_or_create(self, project_id, redis, restore=None):
         if self.fail:
             raise SandboxError("no sandbox for you")
+        if self.fresh and restore is not None:
+            # A fresh sandbox: the route's restore callback runs once.
+            self.fresh = False
+            await restore(self.sandbox)
         return self.sandbox
+
+    def peek(self, project_id):
+        return None if self.fresh else self.sandbox
 
     async def touch(self, project_id):
         self.touched.append(project_id)
@@ -69,6 +79,27 @@ async def maker():
         await db.commit()
     yield maker
     await engine.dispose()
+
+
+@pytest.fixture(autouse=True)
+def fake_blob(monkeypatch) -> dict:
+    store: dict[str, bytes] = {}
+
+    async def put(key, data, content_type="application/gzip"):
+        store[key] = data
+
+    async def get(key):
+        return store[key]
+
+    async def delete_prefix(prefix):
+        gone = [k for k in store if k.startswith(prefix)]
+        for k in gone:
+            del store[k]
+        return len(gone)
+    monkeypatch.setattr(blob, "put", put)
+    monkeypatch.setattr(blob, "get", get)
+    monkeypatch.setattr(blob, "delete_prefix", delete_prefix)
+    return store
 
 
 @pytest.fixture
@@ -170,11 +201,13 @@ def test_chat_streams_and_stores_the_turn(client, maker, monkeypatch, fake_manag
         assert r.headers["x-vercel-ai-ui-message-stream"] == "v1"
         parts = sse_parts("".join(r.iter_text()))
 
-    assert parts[0]["type"] == "start" and parts[-1] == "[DONE]" and parts[-2]["type"] == "finish"
+    assert parts[0]["type"] == "start" and parts[-1] == "[DONE]"
+    assert parts[-2]["type"] == "data-snapshot" and parts[-2]["data"]["seq"] == 1
+    assert parts[-3]["type"] == "finish"
     kinds = [p["type"] for p in parts if isinstance(p, dict)]
     assert "tool-input-available" in kinds and "tool-output-available" in kinds
     assert fake_manager.sandbox.files["src/Page.tsx"] == "export {}"
-    assert fake_manager.touched == [pid]
+    assert pid in fake_manager.touched
 
     msgs = client.get(f"/v1/builder/projects/{pid}/messages").json()
     assert [m["role"] for m in msgs] == ["user", "assistant"]
@@ -251,3 +284,57 @@ def test_delete_kills_the_sandbox(client, fake_manager):
     assert client.delete(f"/v1/builder/projects/{pid}").status_code == 204
     assert fake_manager.killed == [pid]
     assert client.get(f"/v1/builder/projects/{pid}").status_code == 404
+
+
+def test_snapshots_restore_and_usage(client, monkeypatch, fake_manager, fake_blob):
+    script(monkeypatch, [
+        ("v1", [{"id": "c1", "name": "write_file", "error": None,
+                 "arguments": {"path": "src/App.tsx", "content": "one"}}]),
+        ("done 1", []),
+        ("v2", [{"id": "c2", "name": "write_file", "error": None,
+                 "arguments": {"path": "src/App.tsx", "content": "two"}}]),
+        ("done 2", []),
+        ("just talk", []),
+    ])
+    pid = client.post("/v1/builder/projects", json={}).json()["id"]
+    for text in ("first", "second", "chat only"):
+        assert client.post(f"/v1/builder/projects/{pid}/chat", json={"text": text}).status_code == 200
+
+    snaps = client.get(f"/v1/builder/projects/{pid}/snapshots").json()
+    assert [s["seq"] for s in snaps] == [1, 2]            # the chat-only turn stored nothing
+    assert snaps[1]["summary"] == "v2\ndone 2" and snaps[1]["size_bytes"] > 0
+    assert len(fake_blob) == 2
+    assert client.get(f"/v1/builder/projects/{pid}").json()["current_snapshot_id"] == snaps[1]["id"]
+    assert fake_manager.sandbox.files["src/App.tsx"] == "two"
+
+    r = client.post(f"/v1/builder/projects/{pid}/snapshots/1/restore")
+    assert r.status_code == 200 and r.json()["seq"] == 1
+    assert fake_manager.sandbox.files["src/App.tsx"] == "one"     # live sandbox restored
+    assert fake_manager.sandbox.installs == 0                        # package.json unchanged
+    assert client.get(f"/v1/builder/projects/{pid}").json()["current_snapshot_id"] == snaps[0]["id"]
+    assert client.post(f"/v1/builder/projects/{pid}/snapshots/9/restore").status_code == 404
+
+    u = client.get(f"/v1/builder/projects/{pid}/usage").json()
+    assert u["model_calls"] == 5 and u["tokens"] == 5 * 7
+    assert u["storage_bytes"] == sum(s["size_bytes"] for s in snaps)
+    assert set(u["by_kind"]) == {"model", "storage"}
+
+    # Deleting the project removes its objects too.
+    assert client.delete(f"/v1/builder/projects/{pid}").status_code == 204
+    assert fake_blob == {}
+
+
+def test_fresh_sandbox_restores_current_snapshot(client, monkeypatch, fake_manager, fake_blob):
+    script(monkeypatch, [
+        ("v1", [{"id": "c1", "name": "write_file", "error": None,
+                 "arguments": {"path": "src/App.tsx", "content": "built"}}]),
+        ("done", []),
+    ])
+    pid = client.post("/v1/builder/projects", json={}).json()["id"]
+    client.post(f"/v1/builder/projects/{pid}/chat", json={"text": "build"})
+    # The sandbox dies; a fresh one must come back with the snapshot's files.
+    fake_manager.sandbox.files["src/App.tsx"] = "x"
+    fake_manager.fresh = True
+    assert client.get(f"/v1/builder/projects/{pid}/preview").status_code == 200
+    assert fake_manager.sandbox.files["src/App.tsx"] == "built"
+    assert fake_manager.sandbox.restored == 1

@@ -12,6 +12,9 @@
     GET    /builder/projects/{id}/preview    the sandbox URL (starts one)
     GET    /builder/projects/{id}/files      source file list
     GET    /builder/projects/{id}/files/{path}
+    GET    /builder/projects/{id}/snapshots  one per turn that changed files
+    POST   /builder/projects/{id}/snapshots/{seq}/restore
+    GET    /builder/projects/{id}/usage      this project's metered totals
 
 One turn per project at a time (409 otherwise). The stream is the contract
 for any client: see docs/builder.md.
@@ -25,7 +28,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
-from app.builder import routing, stream
+from app.builder import routing, snapshots, stream, usage
 from app.builder.loop import TurnRunner, turns
 from app.builder.sandbox.base import PathError, SandboxError, safe_path
 from app.builder.sandbox.manager import manager
@@ -34,7 +37,8 @@ from app.core.errors import APIError
 from app.db.models import BuilderMessage, BuilderProject, BuilderSnapshot, User
 from app.db.session import async_session
 from app.schemas.builder import (CancelOut, ChatIn, FileOut, FilesOut, MessageOut,
-                                 PreviewOut, ProjectCreate, ProjectOut, ProjectUpdate)
+                                 PreviewOut, ProjectCreate, ProjectOut, ProjectUpdate,
+                                 SnapshotOut, UsageOut)
 from app.services import rate_limit
 from app.services.models_gateway import provider
 
@@ -106,6 +110,7 @@ async def delete_project(project_id: str, request: Request,
     await manager.kill(project_id, request.app.state.redis)
     await db.delete(project)
     await db.commit()
+    await snapshots.delete_all(project_id)
 
 
 # ------------------------------------------------------------- messages
@@ -179,8 +184,8 @@ async def chat(project_id: str, body: ChatIn, request: Request,
         runner = None
         try:
             try:
-                sandbox = await manager.get_or_create(project_id, redis)
-            except SandboxError as e:
+                sandbox = await _start_sandbox(project_id, redis)
+            except (SandboxError, snapshots.SnapshotError) as e:
                 log.error("sandbox for project %s failed: %s", project_id, e)
                 yield stream.frame(stream.error(
                     "The workspace could not be started. Please try again."))
@@ -198,7 +203,10 @@ async def chat(project_id: str, body: ChatIn, request: Request,
             # the moment it sees [DONE] must find the assistant message.
             turns.finish(project_id)
             await manager.touch(project_id)
-            await _persist_turn(project_id, collector, runner)
+            snapshot = await _persist_turn(project_id, collector, runner)
+            if snapshot is not None:
+                yield stream.frame(stream.data("snapshot", {
+                    "id": snapshot.id, "seq": snapshot.seq}))
             yield stream.DONE
 
     return StreamingResponse(generate(), media_type=stream.MEDIA_TYPE,
@@ -206,25 +214,38 @@ async def chat(project_id: str, body: ChatIn, request: Request,
 
 
 async def _persist_turn(project_id: str, collector: stream.PartsCollector,
-                        runner: TurnRunner | None) -> None:
-    """Own session: the request's session may be torn down before a
-    streaming response finishes."""
+                        runner: TurnRunner | None):
+    """The assistant message, the usage rows and the snapshot, in one
+    transaction on its own session (the request's session may be torn down
+    before a streaming response finishes). Returns the snapshot row, if the
+    turn changed any file."""
     if not collector.parts:
-        return
+        return None
+    snapshot = None
     try:
         async with async_session() as db:
             project = await db.get(BuilderProject, project_id)
             if project is None:
-                return
+                return None
             db.add(BuilderMessage(project_id=project_id, role="assistant",
                                   parts=collector.parts,
                                   model=runner.result.model if runner else None))
-            if runner and runner.result.touched:
-                recent = [runner.result.touched] + list(project.recent_files or [])
-                project.recent_files = recent[:RECENT_TURNS]
+            if runner is not None:
+                if runner.result.touched:
+                    recent = [runner.result.touched] + list(project.recent_files or [])
+                    project.recent_files = recent[:RECENT_TURNS]
+                await usage.record_model(db, project_id, runner.result.calls)
+                try:
+                    snapshot = await snapshots.take(db, runner.sandbox, project,
+                                                    collector.text())
+                except (snapshots.SnapshotError, SandboxError, Exception) as e:
+                    # The message and usage still land; the next turn that
+                    # changes a file snapshots this one's work too.
+                    log.error("snapshot for %s failed: %s", project_id, e)
             await db.commit()
     except Exception as e:
-        log.error("could not store the assistant message for %s: %s", project_id, e)
+        log.error("could not store the turn for %s: %s", project_id, e)
+    return snapshot
 
 
 @router.post("/projects/{project_id}/cancel", response_model=CancelOut)
@@ -240,13 +261,7 @@ async def preview(project_id: str, request: Request,
                   user: User = Depends(get_current_user),
                   db: AsyncSession = Depends(get_db)):
     await _owned(project_id, user, db)
-    try:
-        sandbox = await manager.get_or_create(project_id, request.app.state.redis)
-    except SandboxError as e:
-        log.error("preview for project %s failed: %s", project_id, e)
-        raise APIError(503, "sandbox_unavailable",
-                       "The workspace could not be started. Please try again.")
-    await manager.touch(project_id)
+    sandbox = await _sandbox(project_id, request)
     return PreviewOut(url=sandbox.preview_url(), sandbox_id=sandbox.id,
                       driver=sandbox.driver)
 
@@ -276,12 +291,72 @@ async def read_file(project_id: str, path: str, request: Request,
         raise APIError(404, "not_found", "File not found")
 
 
+async def _start_sandbox(project_id: str, redis):
+    """The project's sandbox, restoring its current snapshot into a fresh
+    one. The restore reads the snapshot row on its own session because the
+    manager may call it long after the request's session was used."""
+    async def restore(sandbox):
+        async with async_session() as db:
+            project = await db.get(BuilderProject, project_id)
+            row = await snapshots.current(db, project) if project else None
+        if row is not None:
+            await snapshots.restore(sandbox, row)
+    sandbox = await manager.get_or_create(project_id, redis, restore=restore)
+    await manager.touch(project_id)
+    return sandbox
+
+
 async def _sandbox(project_id: str, request: Request):
     try:
-        sandbox = await manager.get_or_create(project_id, request.app.state.redis)
-    except SandboxError as e:
+        return await _start_sandbox(project_id, request.app.state.redis)
+    except (SandboxError, snapshots.SnapshotError) as e:
         log.error("sandbox for project %s failed: %s", project_id, e)
         raise APIError(503, "sandbox_unavailable",
                        "The workspace could not be started. Please try again.")
+
+
+# ------------------------------------------------------------ snapshots
+@router.get("/projects/{project_id}/snapshots", response_model=list[SnapshotOut])
+async def list_snapshots(project_id: str, user: User = Depends(get_current_user),
+                         db: AsyncSession = Depends(get_db)):
+    await _owned(project_id, user, db)
+    rows = await db.execute(select(BuilderSnapshot)
+                            .where(BuilderSnapshot.project_id == project_id)
+                            .order_by(BuilderSnapshot.seq))
+    return list(rows.scalars())
+
+
+@router.post("/projects/{project_id}/snapshots/{seq}/restore", response_model=SnapshotOut)
+async def restore_snapshot(project_id: str, seq: int, request: Request,
+                           user: User = Depends(get_current_user),
+                           db: AsyncSession = Depends(get_db)):
+    """Make an older version current. A live sandbox gets the files now;
+    otherwise the next sandbox starts from it. The next turn's snapshot
+    continues the sequence, so nothing is lost by going back."""
+    project = await _owned(project_id, user, db)
+    if turns.running(project_id):
+        raise APIError(409, "busy", "Wait for the running turn to finish first.")
+    row = (await db.execute(select(BuilderSnapshot)
+                            .where(BuilderSnapshot.project_id == project_id,
+                                   BuilderSnapshot.seq == seq))).scalar_one_or_none()
+    if row is None:
+        raise APIError(404, "not_found", "No such version")
+    project.current_snapshot_id = row.id
+    await db.commit()
+    sandbox = manager.peek(project_id)
+    if sandbox is not None:
+        try:
+            await snapshots.restore(sandbox, row)
+        except (snapshots.SnapshotError, SandboxError) as e:
+            log.error("restore of %s seq %d into live sandbox failed: %s", project_id, seq, e)
+            # Replace the sandbox rather than leave it half-restored.
+            await manager.kill(project_id, request.app.state.redis)
     await manager.touch(project_id)
-    return sandbox
+    return row
+
+
+@router.get("/projects/{project_id}/usage", response_model=UsageOut)
+async def project_usage(project_id: str, user: User = Depends(get_current_user),
+                        db: AsyncSession = Depends(get_db)):
+    await _owned(project_id, user, db)
+    return UsageOut(**await usage.rollup(db, project_id=project_id))

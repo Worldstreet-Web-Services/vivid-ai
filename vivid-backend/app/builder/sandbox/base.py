@@ -88,6 +88,14 @@ class Sandbox(ABC):
     async def write_file(self, path: str, content: str) -> None: ...
 
     @abstractmethod
+    async def read_bytes(self, path: str) -> bytes:
+        """Raw contents of a file anywhere in the sandbox (absolute path
+        allowed): used for the snapshot tarball, never by a tool."""
+
+    @abstractmethod
+    async def write_bytes(self, path: str, data: bytes) -> None: ...
+
+    @abstractmethod
     async def run(self, cmd: str, timeout: float = 60) -> RunResult: ...
 
     @abstractmethod

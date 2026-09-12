@@ -100,6 +100,24 @@ class LocalSandbox(Sandbox):
             target.write_text(content, encoding="utf-8")
         await asyncio.to_thread(_write)
 
+    def _anywhere(self, path: str) -> Path:
+        """Absolute sandbox paths map to the host as-is; relative ones are
+        project paths. DEV_LOG lives at a project path here."""
+        if path == DEV_LOG:
+            return self._log
+        return Path(path) if path.startswith("/") else self._abs(path)
+
+    async def read_bytes(self, path: str) -> bytes:
+        return await asyncio.to_thread(self._anywhere(path).read_bytes)
+
+    async def write_bytes(self, path: str, data: bytes) -> None:
+        target = self._anywhere(path)
+
+        def _write() -> None:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+        await asyncio.to_thread(_write)
+
     # ------------------------------------------------------------ commands
     async def run(self, cmd: str, timeout: float = 60) -> RunResult:
         # The dev log lives at a project path here; commands that name the

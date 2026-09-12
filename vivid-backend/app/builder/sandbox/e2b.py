@@ -81,6 +81,23 @@ class E2BSandbox(Sandbox):
         except SandboxException as e:
             raise SandboxError(f"write failed: {e}") from e
 
+    def _anywhere(self, path: str) -> str:
+        return path if path.startswith("/") else self._abs(path)
+
+    async def read_bytes(self, path: str) -> bytes:
+        try:
+            return bytes(await self._sb.files.read(self._anywhere(path), format="bytes"))
+        except NotFoundException:
+            raise FileNotFoundError(path)
+        except SandboxException as e:
+            raise SandboxError(f"read failed: {e}") from e
+
+    async def write_bytes(self, path: str, data: bytes) -> None:
+        try:
+            await self._sb.files.write(self._anywhere(path), data)
+        except SandboxException as e:
+            raise SandboxError(f"write failed: {e}") from e
+
     # ------------------------------------------------------------ commands
     async def run(self, cmd: str, timeout: float = 60) -> RunResult:
         try:
