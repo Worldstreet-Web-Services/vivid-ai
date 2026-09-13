@@ -461,3 +461,26 @@ attach only when `fullstack` is true and a backend is linked; full-stack
 without a backend gets a prompt note (build with local state, ask the user
 to connect Supabase, never fake sign-in). Paystack test keys from the user
 verified live through the connector code the same day.
+
+### Live proof: SwiftDrop Logistics (2026-09-13)
+
+One prompt ("a full stack logistics app for Lagos...") through plan mode:
+the flag stayed false after the first message and flipped to true at
+write_spec. Build with Paystack (test keys, connector verified live) and a
+keys-only Supabase link: 71 files, every page in the spec (public site,
+tracking by code, sender booking with Paystack checkout, rider dashboard
+and profile, owner deliveries/riders/revenue, owner and rider sign-in
+pages), eight migrations with RLS per role and transitions as SQL
+functions (accept_delivery, advance_delivery, assign_rider,
+confirm_payment...), two edge functions, a README telling the owner what
+to run. Published at https://swiftdrop-logistics-97875f.vivid-apps.pages.dev.
+
+Cost of the run: the primary used all 40 steps and handed to the fallback
+(step_limit), which re-read the project before finishing; the critique
+fixes then left a half-finished edit and the turn ended on typecheck
+strikes; one follow-up edit turn (24 steps, 7 minutes) fixed it and
+published. Total about 55 minutes. Findings for the speed list: extend the
+budget of a first build that is still writing clean files instead of
+swapping models; end a turn on a clean typecheck, never mid-edit (the
+critique round should not start an edit it cannot finish); parallel image
+generation; show the preview during the turn.
