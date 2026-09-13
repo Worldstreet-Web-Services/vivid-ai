@@ -12,6 +12,7 @@ class ProjectCreate(BaseModel):
 class ProjectUpdate(BaseModel):
     name: str | None = Field(default=None, max_length=120)
     spec_md: str | None = None
+    fullstack: bool | None = None
 
 
 class ProjectOut(BaseModel):
@@ -26,6 +27,7 @@ class ProjectOut(BaseModel):
     backend_mode: str
     supabase_project_ref: str | None
     payments_provider: str = "none"
+    fullstack: bool = False
     published_url: str | None
     created_at: datetime
     updated_at: datetime

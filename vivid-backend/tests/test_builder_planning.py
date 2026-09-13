@@ -102,6 +102,7 @@ async def test_bad_questions_are_sent_back_then_spec_written(monkeypatch):
     parts, c = await collect(runner)
     assert runner.result.reason == planning.SPEC_WRITTEN
     assert runner.result.spec_md == SPEC.strip()
+    assert runner.result.fullstack is False                     # not asked for: a site
     errors = [p for p in c.parts if p["type"].startswith("tool-") and p["state"] == "output-error"]
     assert "between 2 and 6" in errors[0]["errorText"]
     assert "too short" in errors[1]["errorText"]

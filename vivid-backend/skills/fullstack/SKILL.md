@@ -21,6 +21,9 @@ Local state is for the UI only; nothing that matters lives in localStorage.
   reset-password. `src/pages/admin/`: the owner's screens. `src/pages/`: the customer's.
 - Migrations through `apply_migration`, one per change, named for what they do
   (`create_profiles`, `create_orders`, `orders_policies`). Never one giant migration.
+  When the tools are not available this turn, the same migrations are files under
+  `supabase/migrations/` and functions under `supabase/functions/`, as the backend
+  section says; the app is written the same either way.
 
 ## Accounts
 - Supabase auth only: email and password by default; phone OTP (`signInWithOtp` with

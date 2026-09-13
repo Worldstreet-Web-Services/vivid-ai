@@ -448,3 +448,16 @@ solid full stack app... login signup... more complex logic".
   migration and function tools run for real, then one full-stack shop build
   from sign-up to a moved order. Paystack test keys make the verified
   payment path part of the same run.
+
+### Full-stack is opt-in (2026-09-13)
+
+The user: "Building full stack apps shouldn't be by default, unless
+requested." A linked Supabase is not a request. So a project carries
+`fullstack` (default false): the plan's `write_spec` sets it when the user
+asked for accounts, sign-in, per-user records or said full-stack (the plan
+prompt says what counts, and to ask when the idea sits on the line), and the
+client can toggle it with PATCH. The app-logic skill and its done check
+attach only when `fullstack` is true and a backend is linked; full-stack
+without a backend gets a prompt note (build with local state, ask the user
+to connect Supabase, never fake sign-in). Paystack test keys from the user
+verified live through the connector code the same day.

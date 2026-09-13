@@ -90,7 +90,7 @@ generated images is 15 to 25 minutes on the current models; an edit turn is
 POST   /builder/projects            {name?: string, skip_plan?: boolean}   -> Project (201)
 GET    /builder/projects                                                  -> Project[]
 GET    /builder/projects/{id}                                             -> Project
-PATCH  /builder/projects/{id}       {name?, spec_md?}                     -> Project
+PATCH  /builder/projects/{id}       {name?, spec_md?, fullstack?}          -> Project
 DELETE /builder/projects/{id}                                             -> 204 (kills sandbox, deletes snapshots and files)
 
 Project:
@@ -103,6 +103,7 @@ Project:
   backend_mode: "none" | "byo" | "cloud",
   supabase_project_ref: string | null,
   payments_provider: "none" | "paystack",
+  fullstack: boolean,             // accounts + server-side data were asked for (plan sets it)
   published_url: string | null,
   created_at, updated_at
 }
@@ -238,6 +239,18 @@ now has spec_md. Offer:
   - "Edit the spec": PATCH /builder/projects/{id} {spec_md}
   - "Build": POST /builder/projects/{id}/build -> Project (mode "build")
 The user can also keep chatting in plan mode to change the spec.
+
+Full-stack is opt-in. By default a project is a site (pages, catalogue,
+forms, cart, an owner area behind a PIN, all in the browser). When the
+user asks for accounts, sign-in, per-user records or says "full-stack",
+the plan sets `fullstack: true` on the project and the spec's
+Integrations says "Supabase (accounts, data)". Show a "Full-stack app"
+toggle in project settings bound to PATCH {fullstack}. A full-stack
+project needs a Supabase connection (section 8) before the build makes
+accounts and data real; until then the build keeps local state and the
+assistant's reply asks the user to connect Supabase. With both, the
+builder follows its app-logic skill: profiles with roles, policies per
+table, orders and bookings as state machines, edge functions for secrets.
 
 Also in plan mode: uploads (section 7) are listed to the model and image
 uploads are shown to it as pictures, so a user who uploads a logo and

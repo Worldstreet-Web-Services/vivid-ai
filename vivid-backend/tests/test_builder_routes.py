@@ -366,7 +366,8 @@ def test_plan_mode_then_build(client, monkeypatch, fake_manager):
                  "arguments": {"questions": QUESTIONS}}]}
         elif "ask_user" in names and len(seen) == 3:
             yield {"type": "tool_calls", "calls": [
-                {"id": "c2", "name": "write_spec", "error": None, "arguments": {"markdown": SPEC}}]}
+                {"id": "c2", "name": "write_spec", "error": None,
+                 "arguments": {"markdown": SPEC, "fullstack": True}}]}
         elif "ask_user" in names:
             yield {"type": "token", "text": "Spec ready; edit it or build."}
         else:
@@ -393,6 +394,9 @@ def test_plan_mode_then_build(client, monkeypatch, fake_manager):
     assert any(isinstance(p, dict) and p["type"] == "data-spec" for p in parts)
     proj = client.get(f"/v1/builder/projects/{pid}").json()
     assert proj["mode"] == "plan" and proj["spec_md"] == SPEC.strip()
+    assert proj["fullstack"] is True                            # the plan asked for accounts
+    assert client.patch(f"/v1/builder/projects/{pid}", json={"fullstack": False}).json()["fullstack"] is False
+    client.patch(f"/v1/builder/projects/{pid}", json={"fullstack": True})
     msgs = client.get(f"/v1/builder/projects/{pid}/messages").json()
     assert [m["role"] for m in msgs] == ["user", "assistant", "user", "assistant"]
     assert msgs[2]["parts"][1]["type"] == "file"                # the image rode along
@@ -405,6 +409,8 @@ def test_plan_mode_then_build(client, monkeypatch, fake_manager):
     parts = sse_parts(client.post(f"/v1/builder/projects/{pid}/chat", json={"text": "build it"}).text)
     assert seen[-1][0][0] == "read_file" and seen[-1][1] == "vendor/builder"
     assert "Also: dark mode." in seen[-1][2]                     # spec injected into the prompt
+    assert "Backend: not linked yet" in seen[-1][2]              # full-stack asked, no Supabase yet
+    assert "App logic skill" not in seen[-1][2]
     assert fake_manager.sandbox.files["spec.md"] == edited       # and written to the sandbox
     assert not fake_manager.fresh
     u = client.get(f"/v1/builder/projects/{pid}/usage").json()

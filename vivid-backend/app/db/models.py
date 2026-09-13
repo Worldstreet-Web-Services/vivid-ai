@@ -273,6 +273,9 @@ class BuilderProject(Base):
     supabase_project_ref: Mapped[str | None] = mapped_column(String(64), default=None)
     #: none | paystack. The user's connector supplies the keys.
     payments_provider: Mapped[str] = mapped_column(String(16), default="none")
+    # Accounts, roles and server-side data are built only when asked for:
+    # set by the plan (write_spec) or the client, never assumed.
+    fullstack: Mapped[bool] = mapped_column(Boolean, default=False)
     published_url: Mapped[str | None] = mapped_column(String(512), default=None)
     #: Files touched in the last two turns, newest turn first, for the
     #: context block. A list of lists of project-relative paths.

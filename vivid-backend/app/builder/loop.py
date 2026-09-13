@@ -106,8 +106,8 @@ survives a reload; a new customer can do the main thing end to end and see it in
 account; the owner signs in, lands in /admin and can move an order or booking to its next \
 state through the transition function; every table has row level security with policies \
 per role; nothing that matters is kept in localStorage; no service key or secret in src/ or \
-.env. Build what is missing with apply_migration and the files, then tell the user how to \
-sign in as the owner."""
+.env. Build what is missing with apply_migration (or the migration files when the tools are \
+not available) and the app files, then tell the user how to sign in as the owner."""
 #: Seconds before restarting a broken stream, multiplied by the attempt.
 _RETRY_BACKOFF = 1.5
 
@@ -177,9 +177,17 @@ class TurnRunner:
                  project_id: str = "",
                  critique: bool | None = None,
                  images=None,
-                 payments: str | None = None) -> None:
+                 payments: str | None = None,
+                 fullstack: bool = False,
+                 backend_env: bool = False) -> None:
         self.sandbox = sandbox
         self.backend = backend
+        #: The app has a Supabase client (keys pasted) but this turn has no
+        #: management tools: migrations and functions are written as files.
+        self.backend_env = backend_env
+        #: The user asked for accounts and server-side data (plan or client
+        #: set it). Adds the app-logic skill when a backend is linked.
+        self.fullstack = fullstack
         #: "paystack" when the project takes payments; adds the skill.
         self.payments = payments
         #: An ImageMaker when the image model is configured; the model may
@@ -242,6 +250,13 @@ class TurnRunner:
         })
         yield stream.finish()
 
+    @property
+    def _app_logic(self) -> bool:
+        """The app-logic skill and its done check apply only to a project
+        the user asked to be full-stack, and only once a backend is linked
+        so the migration and function tools exist."""
+        return self.fullstack and (self.backend is not None or self.backend_env)
+
     # ------------------------------------------------------------ attempt
     async def _attempt(self, endpoint: provider.Endpoint, stage: str) -> AsyncIterator[dict]:
         """One model's try at the turn. Sets self.result.reason on exit."""
@@ -253,7 +268,8 @@ class TurnRunner:
                          assets_block=self.assets_block,
                          skill_block=skills.ui_block(self.spec_md, self.user_text,
                                                     payments=self.payments,
-                                                    backend=self.backend is not None))}]
+                                                    backend=self._app_logic),
+                         fullstack=self.fullstack, backend_env=self.backend_env)}]
         messages += self.history
         messages.append({"role": "user", "content": self.user_text})
 
@@ -331,7 +347,7 @@ class TurnRunner:
                     yield stream.data("status", {"text": "Checking the app against the spec"})
                     yield stream.data("review", {"kind": "completeness",
                                                  "round": self.result.completion_rounds})
-                    brief = COMPLETION_BRIEF + (FULLSTACK_BRIEF if self.backend is not None else "")
+                    brief = COMPLETION_BRIEF + (FULLSTACK_BRIEF if self._app_logic else "")
                     messages.append({"role": "user", "content": brief})
                     budget = step + settings.BUILDER_COMPLETION_STEPS
                     review_deadline = budget

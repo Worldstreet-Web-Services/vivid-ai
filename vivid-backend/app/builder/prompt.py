@@ -74,13 +74,47 @@ The service key is only ever used inside edge functions.
 """
 
 
+SUPABASE_ENV_ONLY = """## Backend: Supabase (client linked, no management access)
+- The client is ready: `import { supabase } from "@/lib/supabase"`. It reads \
+VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY from .env, which are already set. \
+Never edit .env and never put a key in code.
+- The user connected this project with its URL and publishable key only, so \
+apply_migration, deploy_edge_function and set_secret are NOT available. Do the same \
+work as files: each migration as `supabase/migrations/<NNNN>_<name>.sql` (numbered, \
+one per change, with row level security and policies on every table), each edge \
+function as `supabase/functions/<name>/index.ts`, and secrets listed by name in \
+`supabase/README.md` with what they are for.
+- The app is written as if the schema exists. In the final reply tell the user, in one \
+or two sentences, to run the SQL files in their Supabase SQL editor (in order) and \
+deploy the functions with the Supabase CLI, or to connect their Supabase account in \
+Connectors so the builder can do it for them next time.
+"""
+
+FULLSTACK_NO_BACKEND = """## Backend: not linked yet
+The user asked for a full-stack app (accounts, sign-in, records kept on a server), but \
+no Supabase project is connected to this project yet, so there is no database and no \
+auth. Build the screens now with local state so they can preview and react, keep the \
+data layer in src/lib so it can be swapped, and end your reply with one line asking them \
+to connect their Supabase project in the project settings so accounts and data become \
+real. Do not fake sign-in with a hard-coded user list.
+"""
+
+
 def system_prompt(spec_md: str | None, context_block: str, backend: bool = False,
-                  assets_block: str = "", skill_block: str = "") -> str:
+                  assets_block: str = "", skill_block: str = "",
+                  fullstack: bool = False, backend_env: bool = False) -> str:
+    """`backend`: the management tools exist this turn. `backend_env`: the
+    app has a Supabase client (URL and anon key) but no tools. `fullstack`:
+    the user asked for accounts and server-side data."""
     parts = [STATIC]
     if skill_block:
         parts.append("\n" + skill_block)
     if backend:
         parts.append("\n" + SUPABASE)
+    elif backend_env:
+        parts.append("\n" + SUPABASE_ENV_ONLY)
+    elif fullstack:
+        parts.append("\n" + FULLSTACK_NO_BACKEND)
     if assets_block:
         parts.append("\n" + assets_block)
     if spec_md and spec_md.strip():

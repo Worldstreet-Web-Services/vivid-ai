@@ -121,6 +121,8 @@ async def update_project(project_id: str, body: ProjectUpdate,
         project.name = body.name.strip() or project.name
     if body.spec_md is not None:
         project.spec_md = body.spec_md
+    if body.fullstack is not None:
+        project.fullstack = body.fullstack
     await db.commit()
     return project
 
@@ -243,6 +245,8 @@ async def chat(project_id: str, body: ChatIn, request: Request,
             runner = TurnRunner(sandbox, stage, history, body.text, spec_md, recent,
                                 cancelled=cancel.is_set, backend=backend,
                                 assets_block=assets_block, payments=payments,
+                                fullstack=project.fullstack,
+                                backend_env=bool(env_vars and "VITE_SUPABASE_URL" in env_vars),
                                 keepalive=lambda: manager.touch(project_id),
                                 project_id=project_id,
                                 images=(images.ImageMaker(
@@ -322,6 +326,7 @@ async def _persist_plan_turn(project_id: str, collector: stream.PartsCollector,
                                   parts=collector.parts, model=runner.result.model))
             if runner.result.spec_md:
                 project.spec_md = runner.result.spec_md
+                project.fullstack = runner.result.fullstack
             if runner.result.brief_md:
                 project.brief_md = runner.result.brief_md
             await usage.record_model(db, project_id, [
