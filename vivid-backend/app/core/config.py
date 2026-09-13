@@ -403,7 +403,9 @@ class Settings(BaseSettings):
     BUILDER_PUBLISH_HOST: str = "{alias}.{project}.pages.dev"
     BUILDER_BUILD_TIMEOUT: int = 300
     # A built site above this is refused (a stray video in public/).
-    BUILDER_PUBLISH_MAX_BYTES: int = 25 * 1024 * 1024
+    # Cloudflare caps a single file at 25 MiB, not the site; generated
+    # pictures are about a megabyte each, so a real catalogue needs room.
+    BUILDER_PUBLISH_MAX_BYTES: int = 120 * 1024 * 1024
 
     # User-uploaded assets for the builder (logos, product photos, fonts).
     BUILDER_ASSET_MAX_BYTES: int = 8 * 1024 * 1024

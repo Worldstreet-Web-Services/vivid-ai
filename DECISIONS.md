@@ -522,3 +522,25 @@ keyword table "should be dynamic". Changes:
 - Loop: a first build at its step cap with a clean typecheck gets one
   extension (`BUILDER_BUILD_EXTENSION_STEPS`, 20) before the model swap;
   the completeness review starts with a fresh strike count.
+
+### Live proof: Chopwell (2026-09-13)
+
+One prompt, plan mode chose `platform` and full-stack. Direct database link
+(pooler host aws-1-eu-west-1) so the builder applied 11 migrations itself,
+including the seeded admin, 12 restaurants, menus, riders, customers and
+118 orders. 16 pictures in three concurrent batches, zero write failures
+after the retry and the longer timeout. The primary used 60 steps (40 plus
+the extension) and wrote every page before the handover; the fallback then
+looped on diagnostic "migrations" trying to debug admin sign-in, which was
+the NULL-token-columns quirk of rows inserted into auth.users. Fixes:
+`query_database` (read-only SELECT tool) and the seed pattern sets the
+token columns to ''. One repair turn (7 steps, 3 min) fixed all seeded
+accounts, dropped the diagnostic tables and tested sign-in for all four
+roles. Publish then failed at 32 MB against a 25 MB self-imposed cap;
+raised to 120 MB (Cloudflare caps a file, not a site). Live at
+https://chopwell-24ad14.vivid-apps.pages.dev, owner at /admin.
+
+Next on the list from this run: re-encode generated pictures as JPEG or
+WebP at write time (needs Pillow), a clearer cap message so the model stops
+asking for pictures, and the fallback should inherit the primary's
+tool-result history instead of re-reading.
