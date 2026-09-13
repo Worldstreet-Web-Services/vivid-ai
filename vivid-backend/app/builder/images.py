@@ -63,8 +63,10 @@ class ImageMaker:
     async def make(self, prompt: str, name: str, aspect: str = "square",
                    kind: str = "photo") -> dict:
         if self.left <= 0:
+            have = ", ".join(p for p in self.made if p) or "none yet"
             raise ImageError(f"you have made {len(self.made)} images this turn, the most "
-                             "allowed; reuse them or continue next turn")
+                             f"allowed; reuse these existing paths instead of inventing new "
+                             f"ones: {have}")
         # Calls in one step run concurrently: hold the slot now, give it
         # back if the picture never lands.
         self.made.append(None)

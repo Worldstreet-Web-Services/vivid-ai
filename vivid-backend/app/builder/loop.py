@@ -92,8 +92,9 @@ nav and footer; any admin or owner area exists at its own route behind a sign-in
 linked from the customer nav (a footer "Owner sign in" link at most); each list has at least eight realistic \
 seeded items with names, prices in the spec's currency, short descriptions and an image \
 (generate_image for anything without an upload); each page has every section its recipe \
-lists; every image path used in the code exists in public/uploads (list_files it; generate \
-or fix any that do not, a broken image is worse than none); forms work end to end (add to \
+lists; every image path used in the code AND in seeded database rows (query the tables that hold \
+image columns) exists in public/uploads (list_files it; generate or repoint any that do \
+not, a broken image is worse than none); forms work end to end (add to \
 cart, book, save); the footer has the real business details; the copy passes the copy \
 skill's checks. list_files and read what you need, then build everything that is missing or thin \
 now, in this turn. Do not shorten anything. When it is complete, reply to the user in one or \

@@ -76,7 +76,11 @@ Local state is for the UI only; nothing that matters lives in localStorage.
   `naira()`. Phone numbers as text, formatted with `phone()`.
 - Seed data lives in a migration (`seed_products`), with the same minimums as the design
   recipe (8 to 12 products or services with real names, prices, descriptions and images
-  from public/uploads). The app never seeds on the client.
+  from public/uploads). The app never seeds on the client. Every image path in a seed
+  must be a file that exists: `list_files public/uploads` first and reuse pictures across
+  rows when the picture budget is spent; a row pointing at a picture that was never made
+  is a broken card on every screen. Any `<img>` bound to data has an `onError` fallback
+  (a tinted tile with the item's initial), so a missing file can never show alt text.
 - Reads go through `db.ts` with the row types; lists are paginated (`range(from, to)`,
   page size 24) with a "Load more" button, searched with `ilike`, sorted deliberately.
 - Every list screen has loading, empty and error states; every write shows a pending
