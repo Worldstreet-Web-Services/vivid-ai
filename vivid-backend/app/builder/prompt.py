@@ -110,10 +110,26 @@ real. Do not fake sign-in with a hard-coded user list.
 """
 
 
+CHAIN = """## On-chain: {name} (chain id {chain_id}, native {symbol})
+- This app is a dApp on {name}. The RPC, chain id, explorer and faucet are in .env as \
+VITE_CHAIN_* (already set); the web3 skill above says how to connect a wallet and call \
+contracts with viem. The user's wallet (MetaMask) signs the user's transactions in the \
+browser; nothing in the app ever holds a private key.
+- Contracts go through deploy_contract (Solidity ^0.8.20, OpenZeppelin available). It \
+writes src/lib/contracts/<Name>.ts with the address and ABI; import from there, never paste \
+an address. Deployments cost test {symbol} from the project's deployer \
+({deployer}); call chain_faucet when it is empty. Redeploying gives a new address, so \
+deploy once the contract is final and use edit_file for the app afterwards.
+- Amounts are integers in wei ({symbol} has 18 decimals); format with formatEther. Every \
+transaction shows pending, success with an explorer link ({explorer}/tx/<hash>), or the \
+error in plain words. Show the faucet ({faucet}) when the user's balance is zero.
+"""
+
+
 def system_prompt(spec_md: str | None, context_block: str, backend: bool = False,
                   assets_block: str = "", skill_block: str = "",
                   fullstack: bool = False, backend_env: bool = False,
-                  functions: bool = True) -> str:
+                  functions: bool = True, chain=None) -> str:
     """`backend`: the migration tool exists this turn (`functions`: the
     function and secret tools too). `backend_env`: the app has a Supabase
     client (URL and anon key) but no tools. `fullstack`: the user asked for
@@ -127,6 +143,11 @@ def system_prompt(spec_md: str | None, context_block: str, backend: bool = False
         parts.append("\n" + SUPABASE_ENV_ONLY)
     elif fullstack:
         parts.append("\n" + FULLSTACK_NO_BACKEND)
+    if chain is not None:
+        spec = chain.spec
+        parts.append("\n" + CHAIN.format(name=spec["name"], chain_id=spec["chain_id"],
+                                          symbol=spec["symbol"], explorer=spec["explorer"],
+                                          faucet=spec["faucet"], deployer=chain.deployer_address))
     if assets_block:
         parts.append("\n" + assets_block)
     if spec_md and spec_md.strip():

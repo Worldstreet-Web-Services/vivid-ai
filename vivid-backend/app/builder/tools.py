@@ -7,10 +7,13 @@ a missing result. `write_file` and `edit_file` run the TypeScript checker
 afterwards and put its first lines in the result, so the model sees the
 breakage next to the edit that caused it.
 """
+import json
 import re
 from dataclasses import dataclass
 
 from app.builder.sandbox.base import PathError, Sandbox, SandboxError, safe_path
+from app.builder import chain as chain_mod
+from app.builder.chain import Chain
 from app.builder.images import ImageError, ImageMaker
 from app.builder.supabase import Management, SupabaseError
 from app.core.config import settings
@@ -102,6 +105,26 @@ SUPABASE_SCHEMAS: list[dict] = [
         ["key", "value"]),
 ]
 
+#: Offered when the project is on-chain (a deployer wallet exists).
+CHAIN_SCHEMAS: list[dict] = [
+    _fn("deploy_contract",
+        "Compile one Solidity contract and deploy it to the project's chain from the "
+        "project's deployer wallet. Writes contracts/<Name>.sol, the artifact, and "
+        "src/lib/contracts/<Name>.ts (address + ABI as const) for the app to import. "
+        "OpenZeppelin imports (@openzeppelin/contracts/...) are available. Returns the "
+        "address and explorer link. Redeploying gives a new address.",
+        {"name": {"type": "string", "description": "The contract name inside the source."},
+         "source": {"type": "string", "description": "Full Solidity source (pragma ^0.8.20)."},
+         "constructor_args": {"type": "array", "items": {},
+                              "description": "Constructor arguments in order (numbers as strings for wei)."}},
+        ["name", "source"]),
+    _fn("chain_faucet",
+        "Ask the devnet faucet to fund the project's deployer wallet with test tokens. "
+        "Call it once before the first deployment, or when a deployment says the "
+        "deployer has no balance.",
+        {}, []),
+]
+
 #: Offered when the image model is configured. Makes a picture and puts it
 #: in public/uploads like an upload, so the app can use it by path.
 IMAGE_SCHEMAS: list[dict] = [
@@ -123,6 +146,7 @@ IMAGE_SCHEMAS: list[dict] = [
 ]
 
 NAMES = {s["function"]["name"] for s in SCHEMAS}
+CHAIN_NAMES = {s["function"]["name"] for s in CHAIN_SCHEMAS}
 SUPABASE_NAMES = {s["function"]["name"] for s in SUPABASE_SCHEMAS}
 IMAGE_NAMES = {s["function"]["name"] for s in IMAGE_SCHEMAS}
 _IMAGE_NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,60}$")
@@ -156,10 +180,13 @@ class Backend:
 FUNCTION_TOOLS = {"deploy_edge_function", "set_secret"}
 
 
-def schemas_for(backend: "Backend | None", images: "ImageMaker | None" = None) -> list[dict]:
+def schemas_for(backend: "Backend | None", images: "ImageMaker | None" = None,
+                chain: "Chain | None" = None) -> list[dict]:
     out = list(SCHEMAS)
     if images is not None:
         out += IMAGE_SCHEMAS
+    if chain is not None:
+        out += CHAIN_SCHEMAS
     if backend is not None:
         out += [s for s in SUPABASE_SCHEMAS
                 if backend.can_functions or s["function"]["name"] not in FUNCTION_TOOLS]
@@ -207,7 +234,8 @@ def truncate(text: str, limit: int | None = None) -> str:
 async def execute(name: str, args: dict, sandbox: Sandbox,
                   backend: Backend | None = None,
                   images: ImageMaker | None = None,
-                  typecheck_now: bool = True) -> Outcome:
+                  typecheck_now: bool = True,
+                  chain: Chain | None = None) -> Outcome:
     """Run one tool. Never raises for a problem the model can act on.
 
     `typecheck_now=False` makes write_file and edit_file skip their own
@@ -222,6 +250,12 @@ async def execute(name: str, args: dict, sandbox: Sandbox,
             outcome = await _generate_image(args, images)
         except ImageError as e:
             outcome = Outcome(f"error: {e}")
+        outcome.text = truncate(outcome.text) or "(no output)"
+        return outcome
+    if name in CHAIN_NAMES:
+        if chain is None:
+            return Outcome(f"error: {name} needs the project to be on-chain (chain enabled in settings).")
+        outcome = await _CHAIN_HANDLERS[name](args, sandbox, chain)
         outcome.text = truncate(outcome.text) or "(no output)"
         return outcome
     if name in SUPABASE_NAMES:
@@ -346,6 +380,80 @@ async def _set_secret(args: dict, backend: Backend) -> Outcome:
     await backend.api.set_secrets(backend.ref, {key: value})
     # The value is never echoed: not to the model, not to the thread.
     return Outcome(f"Secret {key} set for edge functions.")
+
+
+# ------------------------------------------------------- chain handlers
+async def _ensure_chain_tooling(sandbox: Sandbox) -> str | None:
+    """solc, viem and OpenZeppelin in node_modules, and the deploy script
+    on disk. Returns an error string when the install fails."""
+    check = await sandbox.run("test -d node_modules/solc && test -d node_modules/viem "
+                              "&& test -d node_modules/@openzeppelin/contracts", timeout=15)
+    if not check.ok:
+        inst = await sandbox.run(f"npm install --no-audit --no-fund {chain_mod.PACKAGES} 2>&1 | tail -3",
+                                 timeout=settings.BUILDER_INSTALL_TIMEOUT)
+        if not inst.ok:
+            return f"error: could not install the chain tooling: {inst.output[-300:]}"
+    try:
+        current = await sandbox.read_file(chain_mod.SCRIPT_PATH)
+    except FileNotFoundError:
+        current = None
+    if current != chain_mod.DEPLOY_SCRIPT:
+        await sandbox.write_file(chain_mod.SCRIPT_PATH, chain_mod.DEPLOY_SCRIPT)
+    return None
+
+
+async def _deploy_contract(args: dict, sandbox: Sandbox, chain: Chain) -> Outcome:
+    name = str(args.get("name") or "").strip()
+    source = args.get("source")
+    if not chain_mod.valid_name(name):
+        return Outcome("error: name must be the contract's name, CapitalCase, e.g. Marketplace")
+    if not isinstance(source, str) or "contract " not in source:
+        return Outcome("error: source must be the full Solidity file containing the contract")
+    if f"contract {name}" not in source:
+        return Outcome(f"error: the source has no `contract {name}`")
+    ctor = args.get("constructor_args") or []
+    if not isinstance(ctor, list):
+        return Outcome("error: constructor_args must be a JSON array")
+    problem = await _ensure_chain_tooling(sandbox)
+    if problem:
+        return Outcome(problem)
+    spec = chain.spec
+    file = f"contracts/{name}.sol"
+    await sandbox.write_file(file, source)
+    await sandbox.write_bytes(chain_mod.KEY_FILE, chain.deployer_key.encode())
+    try:
+        result = await sandbox.run(chain_mod.deploy_command(spec, file, name, json.dumps(ctor)),
+                                   timeout=240)
+    finally:
+        await sandbox.run(f"rm -f {chain_mod.KEY_FILE}", timeout=10)
+    line = next((ln for ln in reversed(result.stdout.splitlines()) if ln.startswith("{")), "")
+    try:
+        out = json.loads(line)
+    except ValueError:
+        return Outcome(f"error: the deploy script failed: {result.output[-400:]}")
+    if not out.get("ok"):
+        return Outcome("error: " + "\n".join(out.get("errors") or ["unknown failure"]))
+    note = await chain_mod.verify(spec, out["address"], name, source)
+    link = chain_mod.explorer_link(spec, "address", out["address"])
+    text = (f"Deployed {name} at {out['address']} on {spec['name']} (tx {out['tx']}, block "
+            f"{out['block']}, gas {out['gasUsed']}). Explorer: {link}\n"
+            f"Import it: `import {{ {name}Address, {name}Abi }} from \"@/lib/contracts/{name}\"`. "
+            f"Deployer balance: {out['balance']} {spec['symbol']}."
+            + (f" {note}" if note else ""))
+    return Outcome(text, touched=f"src/lib/contracts/{name}.ts")
+
+
+async def _chain_faucet(args: dict, sandbox: Sandbox, chain: Chain) -> Outcome:
+    spec = chain.spec
+    try:
+        got = await chain_mod.fund(spec, chain.deployer_address)
+    except ValueError as e:
+        return Outcome(f"error: the faucet refused: {e}")
+    return Outcome(f"Faucet sent {got.get('amount')} {spec['symbol']} to the deployer "
+                   f"{chain.deployer_address} (tx {got.get('tx')}). It lands within a few seconds.")
+
+
+_CHAIN_HANDLERS = {"deploy_contract": _deploy_contract, "chain_faucet": _chain_faucet}
 
 
 _SUPABASE_HANDLERS = {

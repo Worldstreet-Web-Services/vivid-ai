@@ -665,3 +665,38 @@ fire, so sections below the fold look faded or blank in critique shots
 bottom in steps, then back up, before capturing; that is a template
 change (scripts/screenshot.mjs) for the next rebuild, together with the
 gsap/motion packages and the default favicon.
+
+## 18. dApps on Ark Constellation (2026-09-13)
+
+The user wants Vivid to build decentralised apps on one chain only: Ark
+Constellation devnet (Cosmos SDK with an EVM; chain id 9000; KASH, 18
+decimals; RPC evm.34.60.137.196.sslip.io; Blockscout explorer; faucet
+POST /faucet {address} gives 10 KASH; MetaMask, viem, Hardhat, Foundry
+compatible). Proven from here first: a throwaway deployer funded by the
+faucet, a Counter compiled with solc and deployed with viem, then a write
+and a read against it. Blockscout verifies up to solc 0.8.36, so the tool
+pins that.
+
+- `app/builder/chain.py`: the chain constants, `generate_deployer`
+  (eth-account), `fund` (faucet), `verify` (best effort), the deploy
+  script the tool writes into the sandbox (`scripts/vivid-deploy.mjs`:
+  solc standard JSON with OpenZeppelin imports resolved from
+  node_modules, viem deploy from a key file at /tmp, artifact +
+  `src/lib/contracts/<Name>.ts` binding, one JSON line out).
+- Tools `deploy_contract(name, source, constructor_args)` and
+  `chain_faucet`, offered only when the project is on-chain; the key file
+  is written before the deploy and removed after; the binding counts as a
+  touched file so the typecheck runs.
+- Project `chain` ("none" | "ark-devnet") and `deployer_address`; the key
+  is a project secret. `POST/DELETE /projects/{id}/chain`,
+  `POST .../chain/faucet`; the plan sets `onchain` on write_spec for
+  dApp, token, NFT, escrow, vote or "web3" asks and the route enables the
+  chain and funds the deployer. `.env` gets VITE_CHAIN_* and the deployer
+  address; the prompt gets an On-chain section; the completeness review a
+  chain check.
+- `skills/web3`: what goes on chain and what does not, the file layout,
+  wallet connect with add/switch chain, reads, simulated writes with
+  pending/confirmed/explorer states, events, admin ownership transfer,
+  and Solidity patterns (Token, Collectible, Marketplace escrow, Ballot,
+  Registry) with OpenZeppelin. Template gets viem, solc 0.8.36 and
+  OpenZeppelin for the next rebuild.

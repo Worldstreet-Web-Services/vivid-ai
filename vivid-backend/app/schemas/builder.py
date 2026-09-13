@@ -29,6 +29,8 @@ class ProjectOut(BaseModel):
     supabase_project_ref: str | None
     payments_provider: str = "none"
     maps_provider: str = "none"
+    chain: str = "none"
+    deployer_address: str | None = None
     fullstack: bool = False
     recipe: str | None = None
     published_url: str | None

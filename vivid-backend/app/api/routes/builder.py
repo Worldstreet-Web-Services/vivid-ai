@@ -49,7 +49,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
-from app.builder import (analytics, assets, blob, images, pgdirect, planning, publish, routing, secrets, skills,
+from app.builder import (analytics, assets, blob, chain as chain_mod, images, pgdirect, planning, publish, routing, secrets, skills,
                          snapshots, stream, supabase, tools, usage)
 from app.builder.loop import FEED_DONE, ModelCall, TurnRunner, turns
 from app.builder.planning import PlanRunner
@@ -226,6 +226,7 @@ async def chat(project_id: str, body: ChatIn, request: Request,
     spec_md, recent = project.spec_md, _recent(project)
     payments = project.payments_provider if project.payments_provider != "none" else None
     maps = project.maps_provider if project.maps_provider != "none" else None
+    chain = None if planning_mode else await _chain_for(project, db)
     if not planning_mode and project.recipe is None and (spec_md or project.brief_md):
         # A project that skipped plan mode still gets a recipe, chosen once.
         project.recipe = await skills.pick_recipe(spec_md or project.brief_md or "")
@@ -272,6 +273,7 @@ async def chat(project_id: str, body: ChatIn, request: Request,
             runner = TurnRunner(sandbox, stage, history, body.text, spec_md, recent,
                                 cancelled=cancel.is_set, backend=backend,
                                 assets_block=assets_block, payments=payments, maps=maps,
+                                chain=chain,
                                 fullstack=project.fullstack, recipe=project.recipe,
                                 backend_env=bool(env_vars and "VITE_SUPABASE_URL" in env_vars),
                                 keepalive=lambda: manager.touch(project_id),
@@ -388,6 +390,8 @@ async def _persist_plan_turn(project_id: str, collector: stream.PartsCollector,
                 project.spec_md = runner.result.spec_md
                 project.fullstack = runner.result.fullstack
                 project.recipe = runner.result.recipe
+                if runner.result.onchain and project.chain == "none":
+                    await _enable_chain(db, project)
             if runner.result.brief_md:
                 project.brief_md = runner.result.brief_md
             if planning.auto_named(project.name):
@@ -450,6 +454,8 @@ async def _env_for(project: BuilderProject, db: AsyncSession) -> dict[str, str] 
         key = await secrets.get_secret(db, project.id, "GOOGLE_MAPS_KEY")
         if key:
             env["VITE_GOOGLE_MAPS_KEY"] = key
+    if project.chain in chain_mod.CHAINS:
+        env.update(chain_mod.env_for(chain_mod.CHAINS[project.chain], project.deployer_address))
     return env or None
 
 
@@ -581,6 +587,72 @@ async def disable_payments(project_id: str, user: User = Depends(get_current_use
     await secrets.delete_secret(db, project_id, "PAYSTACK_PUBLIC_KEY")
     await db.commit()
     return project
+
+
+# ----------------------------------------------------------------- chain
+async def _chain_for(project: BuilderProject, db: AsyncSession) -> chain_mod.Chain | None:
+    if project.chain not in chain_mod.CHAINS or not project.deployer_address:
+        return None
+    key = await secrets.get_secret(db, project.id, "CHAIN_DEPLOYER_KEY")
+    if not key:
+        return None
+    return chain_mod.Chain(key=project.chain, deployer_key=key,
+                           deployer_address=project.deployer_address)
+
+
+async def _enable_chain(db: AsyncSession, project: BuilderProject) -> None:
+    """A deployer wallet for the project, funded from the faucet when it
+    answers; the app's .env gets the chain values on the next turn."""
+    spec = chain_mod.ARK
+    key, address = chain_mod.generate_deployer()
+    await secrets.set_secret(db, project.id, "CHAIN_DEPLOYER_KEY", key)
+    project.chain = spec["key"]
+    project.deployer_address = address
+    try:
+        await chain_mod.fund(spec, address)
+    except ValueError as e:
+        log.warning("faucet for %s did not fund %s: %s", project.id, address, e)
+
+
+@router.post("/projects/{project_id}/chain", response_model=ProjectOut)
+async def enable_chain(project_id: str, user: User = Depends(get_current_user),
+                       db: AsyncSession = Depends(get_db)):
+    """Make the project a dApp on Ark Constellation: a deployer wallet is
+    created and funded, the deploy tools and the web3 skill switch on."""
+    project = await _owned(project_id, user, db)
+    if not secrets.configured():
+        raise APIError(503, "not_configured", "Secrets storage is not configured.")
+    if project.chain == "none":
+        await _enable_chain(db, project)
+    await db.commit()
+    sandbox = manager.peek(project_id)
+    if sandbox is not None:
+        await _sync_env(sandbox, await _env_for(project, db))
+    return _present(project)
+
+
+@router.post("/projects/{project_id}/chain/faucet", response_model=ProjectOut)
+async def fund_chain(project_id: str, user: User = Depends(get_current_user),
+                     db: AsyncSession = Depends(get_db)):
+    project = await _owned(project_id, user, db)
+    if project.chain not in chain_mod.CHAINS or not project.deployer_address:
+        raise APIError(400, "bad_request", "The project is not on-chain.")
+    try:
+        await chain_mod.fund(chain_mod.CHAINS[project.chain], project.deployer_address)
+    except ValueError as e:
+        raise APIError(502, "upstream_error", f"The faucet refused: {e}")
+    return _present(project)
+
+
+@router.delete("/projects/{project_id}/chain", response_model=ProjectOut)
+async def disable_chain(project_id: str, user: User = Depends(get_current_user),
+                        db: AsyncSession = Depends(get_db)):
+    project = await _owned(project_id, user, db)
+    project.chain = "none"
+    project.deployer_address = None
+    await secrets.delete_secret(db, project_id, "CHAIN_DEPLOYER_KEY")
+    await db.commit()
+    return _present(project)
 
 
 # ------------------------------------------------------------------ maps

@@ -30,6 +30,7 @@ Uploads     POST/GET /builder/projects/{id}/assets · DELETE /builder/projects/{
 Versions    GET/POST /builder/projects/{id}/snapshots · POST .../snapshots/{seq}/restore · POST /builder/projects/{id}/undo
 Connectors  GET /connectors · POST /connectors · DELETE /connectors/{id} · GET /connectors/supabase/authorize
 Per project POST/DELETE /builder/projects/{id}/supabase · POST/DELETE .../payments · POST/DELETE .../maps
+            POST/DELETE /builder/projects/{id}/chain (dApp on Ark Constellation) · POST .../chain/faucet
 Publish     POST /builder/projects/{id}/publish · GET .../publishes · GET .../publishes/{publish_id}
 Usage       GET /builder/projects/{id}/usage · GET /builder/projects/{id}/analytics?days=30
 Public      POST /a/{project_id} (pageview reporter used by published sites; no auth)
@@ -140,6 +141,8 @@ Project:
   supabase_project_ref: string | null,
   payments_provider: "none" | "paystack",
   maps_provider: "none" | "google",
+  chain: "none" | "ark-devnet",      // a dApp: contracts deploy to Ark Constellation
+  deployer_address: string | null,   // the project's deployer wallet (public address)
   turn_status: "idle" | "running",   // a turn is in flight on the backend (survives your disconnect)
   turn_started_at: string | null,    // when it started; show "building for 6 min"
   thumbnail_url: string | null,      // latest desktop screenshot, a 7-day signed URL; for the project card
@@ -457,6 +460,30 @@ every turn. Remind the user (the model's final message does too) to restrict the
 key to their site's domain in Google Cloud, since a browser key is public.
 
 ------------------------------------------------------------------------
+## 9b. On-chain apps (Ark Constellation)
+
+Vivid builds dApps on one chain only: the Ark Constellation devnet (an EVM
+chain, id 9000, native KASH, MetaMask-compatible). The plan sets it when the
+user asks for a dApp, token, NFT, escrow, vote, or anything "web3" or
+"decentralised" (write_spec `onchain`), or the client turns it on:
+
+  POST   /builder/projects/{id}/chain         -> Project {chain: "ark-devnet", deployer_address}
+         creates the project's deployer wallet and funds it from the devnet faucet
+  POST   /builder/projects/{id}/chain/faucet  -> Project  (top the deployer up; 502 with the faucet's reason if refused)
+  DELETE /builder/projects/{id}/chain         -> Project {chain: "none"}
+
+From then on the model has deploy_contract (compiles Solidity in the
+sandbox, deploys from the deployer, writes src/lib/contracts/<Name>.ts) and
+chain_faucet, the web3 skill (wallet connect, viem reads and writes,
+contract patterns), and the app's .env carries VITE_CHAIN_ID, VITE_CHAIN_RPC,
+VITE_CHAIN_WS, VITE_CHAIN_EXPLORER, VITE_CHAIN_FAUCET, VITE_CHAIN_SYMBOL and
+VITE_DEPLOYER_ADDRESS. The deployer's private key never leaves the backend.
+Show in project settings: "On-chain" toggle, the deployer address with an
+explorer link (https://explorer.34.60.137.196.sslip.io/address/<addr>) and a
+"Fund deployer" button. Visitors of the built app need MetaMask and test
+KASH from https://faucet.34.60.137.196.sslip.io; the model's final reply
+says so and names the deployed contracts.
+
 ## 10. Publish
 
 POST /builder/projects/{id}/publish                -> Publish (202) {id, snapshot_id, url, status: "pending", error, created_at, updated_at}
