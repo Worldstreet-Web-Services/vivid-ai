@@ -644,3 +644,24 @@ added to the template's package.json for the next template build.
   at publish time, never into the source, and stays quiet on localhost and
   sandbox previews; `GET /builder/projects/{id}/analytics?days=` rolls up
   totals, per day, pages, referrers, devices, countries.
+
+### Live proof: Ọ̀nà Studio (2026-09-13)
+
+A sneaker brand store as a site (not full-stack), Paystack on. Plan chose
+`shop`; the build wrote motion components (Reveal, Parallax, Ambience,
+PageTransition) before the pages, 65 files, 93 steps including the
+extension and a fallback that inherited the conversation and answered at
+once; 16 pictures in two concurrent batches, 27 refused picture calls
+afterwards (fixed: the tool is withdrawn once the budget is spent). Live
+at https://ona-studio-d8be74.vivid-apps.pages.dev with favicon, title,
+description, theme-color and Open Graph tags, and the analytics reporter
+in the page; a browser-style pageview landed and the rollup returned it.
+Dark editorial look with the orange accent, eyebrow, size pills, drop
+section, lookbook.
+
+Finding: full-page screenshots catch `whileInView` entrances before they
+fire, so sections below the fold look faded or blank in critique shots
+(and in our own). The screenshot script should scroll the page to the
+bottom in steps, then back up, before capturing; that is a template
+change (scripts/screenshot.mjs) for the next rebuild, together with the
+gsap/motion packages and the default favicon.
