@@ -61,6 +61,8 @@ async def init_db() -> None:
             "chain VARCHAR(16) NOT NULL DEFAULT 'none'"))
         await conn.execute(text(
             "ALTER TABLE builder_projects ADD COLUMN IF NOT EXISTS deployer_address VARCHAR(64)"))
+        await conn.execute(text(
+            "ALTER TABLE builder_projects ADD COLUMN IF NOT EXISTS published_at TIMESTAMPTZ"))
 
     async with async_session() as db:
         # Prompts are product config and deploy with the backend: upsert so a

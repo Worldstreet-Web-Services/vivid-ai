@@ -785,6 +785,10 @@ async def start_publish(project_id: str, request: Request,
         raise APIError(409, "busy", "Wait for the running turn to finish first.")
     if project_id in _publishing and not _publishing[project_id].done():
         raise APIError(409, "busy", "A publish is already running for this project.")
+    if project.current_snapshot_id is None:
+        # Nothing has been built: publishing the empty template would put
+        # "Your app starts here" on a real URL and call the project live.
+        raise APIError(409, "nothing_to_publish", "Build the app before publishing it.")
     row = BuilderPublish(project_id=project_id, snapshot_id=project.current_snapshot_id,
                          status="pending")
     db.add(row)
@@ -807,6 +811,7 @@ async def _run_publish(project_id: str, publish_id: str, alias: str, redis) -> N
                 project = await db.get(BuilderProject, project_id)
                 if project is not None:
                     project.published_url = fields.get("url")
+                    project.published_at = datetime.now(timezone.utc)
             await db.commit()
 
     try:

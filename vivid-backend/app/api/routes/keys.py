@@ -91,17 +91,17 @@ async def create_key(body: ApiKeyCreate,
 
 
 @router.get("", response_model=list[ApiKeyOut])
-async def list_keys(user: User = Depends(get_session_user),
+async def list_keys(include_revoked: bool = False,
+                    user: User = Depends(get_session_user),
                     db: AsyncSession = Depends(get_db)):
-    """This account's keys, newest first, secrets excluded.
-
-    Revoked keys stay in the list: "this key stopped working on the 4th" is
-    the answer to a support question, and hiding them only prompts the same
-    question again.
-    """
-    rows = (await db.execute(
-        select(ApiKey).where(ApiKey.owner_user_id == user.id)
-        .order_by(ApiKey.created_at.desc()))).scalars()
+    """This account's live keys, newest first, secrets excluded. A revoked
+    key that stayed in the list read as "revoking failed", so they are
+    left out unless ?include_revoked=1 asks for the audit trail (each
+    carries revoked_at)."""
+    query = select(ApiKey).where(ApiKey.owner_user_id == user.id)
+    if not include_revoked:
+        query = query.where(ApiKey.revoked_at.is_(None))
+    rows = (await db.execute(query.order_by(ApiKey.created_at.desc()))).scalars()
     return [ApiKeyOut.model_validate(row) for row in rows]
 
 
