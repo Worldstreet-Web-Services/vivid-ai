@@ -40,6 +40,9 @@ class ScriptedModel:
 @pytest.fixture(autouse=True)
 def models(monkeypatch):
     monkeypatch.setattr(settings, "OPENROUTER_API_KEY", "test-key")
+    # Extensions are tested on their own; the cap tests want a hard cap.
+    monkeypatch.setattr(settings, "BUILDER_EDIT_EXTENSION_STEPS", 0)
+    monkeypatch.setattr(settings, "BUILDER_BUILD_EXTENSION_STEPS", 0)
     monkeypatch.setattr(settings, "BUILD_MODEL", "vendor/primary")
     monkeypatch.setattr(settings, "EDIT_MODEL", "vendor/primary")
     monkeypatch.setattr(settings, "FALLBACK_MODEL", "vendor/fallback")
@@ -288,10 +291,11 @@ async def test_first_build_extends_once_while_clean_then_falls_back(monkeypatch)
     assert runner.result.reason == loop.STEP_LIMIT
 
 
-async def test_no_extension_for_edits_or_after_a_failed_typecheck(monkeypatch):
+async def test_edits_extend_once_too_but_not_after_a_failed_typecheck(monkeypatch):
     monkeypatch.setattr(settings, "BUILDER_MAX_STEPS", 2)
     monkeypatch.setattr(settings, "BUILDER_BUILD_MAX_STEPS", 2)
     monkeypatch.setattr(settings, "BUILDER_BUILD_EXTENSION_STEPS", 2)
+    monkeypatch.setattr(settings, "BUILDER_EDIT_EXTENSION_STEPS", 1)
     monkeypatch.setattr(settings, "BUILDER_COMPLETION_ROUNDS", 0)
     monkeypatch.setattr(settings, "BUILDER_CRITIQUE_ROUNDS", 0)
     forever = [("", [call("write_file", {"path": f"src/F{i}.tsx", "content": "export {}"}, f"c{i}")])
@@ -299,7 +303,7 @@ async def test_no_extension_for_edits_or_after_a_failed_typecheck(monkeypatch):
     model = install(monkeypatch, forever)
     runner = TurnRunner(FakeSandbox({"src/App.tsx": "x"}), routing.EDIT, [], "tweak")
     await collect(runner)
-    assert [r["model"] for r in model.requests][:3] == ["vendor/primary"] * 2 + ["vendor/fallback"]
+    assert [r["model"] for r in model.requests][:4] == ["vendor/primary"] * 3 + ["vendor/fallback"]
 
     # A first build whose last typecheck failed gets no extension either.
     sb = FakeSandbox({"src/App.tsx": "x"})
@@ -308,3 +312,27 @@ async def test_no_extension_for_edits_or_after_a_failed_typecheck(monkeypatch):
     runner = TurnRunner(sb, routing.BUILD, [], "build", spec_md="# Spec\nBig")
     await collect(runner)
     assert [r["model"] for r in model.requests][:3] == ["vendor/primary"] * 2 + ["vendor/fallback"]
+
+
+async def test_fallback_inherits_the_primary_conversation(monkeypatch):
+    """The second model sees the first model's tool calls and results plus a
+    handover note, so it continues instead of re-reading everything."""
+    monkeypatch.setattr(settings, "BUILDER_MAX_STEPS", 2)
+    monkeypatch.setattr(settings, "BUILDER_EDIT_EXTENSION_STEPS", 0)
+    monkeypatch.setattr(settings, "BUILDER_CRITIQUE_ROUNDS", 0)
+    model = install(monkeypatch, [
+        ("Reading.", [call("read_file", {"path": "src/App.tsx"}, "c1")]),
+        ("Writing.", [call("write_file", {"path": "src/B.tsx", "content": "export {}"}, "c2")]),
+        ("Done now.", []),
+    ])
+    sb = FakeSandbox({"src/App.tsx": "x" * 2000})
+    runner = TurnRunner(sb, routing.EDIT, [], "add B")
+    await collect(runner)
+    assert [r["model"] for r in model.requests] == ["vendor/primary"] * 2 + ["vendor/fallback"]
+    handed = model.requests[2]["messages"]
+    roles = [m["role"] for m in handed]
+    assert roles[:2] == ["system", "user"] and "tool" in roles          # the primary's turn rides along
+    assert handed[-1]["role"] == "user" and "ran out of steps" in handed[-1]["content"]
+    tool_results = [m for m in handed if m["role"] == "tool"]
+    assert any(m["content"].endswith("(shortened)") for m in tool_results)  # long reads trimmed
+    assert runner.result.reason == loop.ANSWERED and runner.result.retried

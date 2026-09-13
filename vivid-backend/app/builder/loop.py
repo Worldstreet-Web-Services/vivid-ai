@@ -72,6 +72,29 @@ class TurnResult:
 
 STREAM_RETRY_NOTICE = "The model connection dropped; retrying."
 
+_REASON_WORDS = {"step_limit": "it ran out of steps", "typecheck_strikes": "the typecheck kept failing",
+                 "error": "its connection failed"}
+#: The fallback needs what was done, not every byte of it: long tool
+#: results are shortened to their first lines.
+_CARRY_RESULT_CHARS = 600
+
+
+def _trim_carry(messages: list[dict]) -> list[dict]:
+    out = []
+    for m in messages:
+        if m.get("role") == "tool" and isinstance(m.get("content"), str) \
+                and len(m["content"]) > _CARRY_RESULT_CHARS:
+            m = dict(m, content=m["content"][:_CARRY_RESULT_CHARS] + "\n... (shortened)")
+        out.append(m)
+    return out
+
+
+#: Put to the fallback model after the primary's conversation: continue,
+#: do not start over.
+HANDOVER_NOTE = ("The previous model stopped here ({reason}); the files it wrote are in place and "
+                 "its tool results above are current. Continue from this state: do not re-read "
+                 "files you can see above, do not remake pictures or migrations already made, "
+                 "finish what is left, get the typecheck clean, and reply to the user.")
 CONTINUE_NUDGE = ("Go on and do it now with the tools; do not describe what you are about "
                   "to do. Reply to the user only when the work is complete.")
 
@@ -194,6 +217,9 @@ class TurnRunner:
         self.recipe = recipe
         #: "google" when the project has a Maps key; adds the maps skill.
         self.maps = maps
+        #: The previous attempt's conversation, handed to the next model.
+        self._carry: list[dict] = []
+        self._live: tuple[list[dict], int] | None = None
         #: The user asked for accounts and server-side data (plan or client
         #: set it). Adds the app-logic skill when a backend is linked.
         self.fullstack = fullstack
@@ -270,6 +296,16 @@ class TurnRunner:
     async def _attempt(self, endpoint: provider.Endpoint, stage: str) -> AsyncIterator[dict]:
         """One model's try at the turn. Sets self.result.reason on exit."""
         self.result.model = endpoint.model
+        self._live = None
+        try:
+            async for part in self._attempt_inner(endpoint, stage):
+                yield part
+        finally:
+            if self._live is not None:
+                messages, base_len = self._live
+                self._carry = _trim_carry(messages[base_len:])
+
+    async def _attempt_inner(self, endpoint: provider.Endpoint, stage: str) -> AsyncIterator[dict]:
         block = await context.build(self.sandbox, self.recent_files)
         messages = [{"role": "system",
                      "content": prompt.system_prompt(
@@ -283,6 +319,15 @@ class TurnRunner:
                          functions=self.backend is None or self.backend.can_functions)}]
         messages += self.history
         messages.append({"role": "user", "content": self.user_text})
+        if self._carry:
+            # A handover: the fallback sees what the primary did and why it
+            # stopped, instead of re-reading the project from scratch.
+            messages += self._carry
+            messages.append({"role": "user", "content": HANDOVER_NOTE.format(
+                reason=_REASON_WORDS.get(self.result.reason, self.result.reason))})
+        base_len = len(messages)
+        self._carry = []
+        self._live = (messages, base_len)
 
         strikes = 0
         # The turn's stage, not the attempt's: a fallback attempt of a first
@@ -300,13 +345,14 @@ class TurnRunner:
         step = 0
         while True:
             step += 1
-            if step > budget and first_build and not extended and strikes == 0 \
+            if step > budget and not extended and strikes == 0 \
                     and review_deadline is None and not self.result.completion_rounds \
                     and not self.result.critique_rounds:
                 # Still writing clean files at the cap: more steps for this
-                # model beat a handover that re-reads everything.
+                # model beat a handover.
                 extended = True
-                budget += settings.BUILDER_BUILD_EXTENSION_STEPS
+                budget += (settings.BUILDER_BUILD_EXTENSION_STEPS if first_build
+                           else settings.BUILDER_EDIT_EXTENSION_STEPS)
                 yield stream.data("status", {"text": "Still building, a few more steps"})
             if step > budget:
                 if (review_deadline is not None and step > review_deadline
