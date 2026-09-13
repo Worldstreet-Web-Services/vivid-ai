@@ -41,7 +41,7 @@ layout, accessible controls. No lorem ipsum, no placeholder TODOs, no "coming so
 real page, routed and linked from the nav (and the footer); lists are seeded with at \
 least eight realistic items (names, prices, descriptions, categories, an image each); \
 every page has all the sections its recipe lists; an admin or owner area named in \
-the spec is reachable, not hidden. A thin site is a failed build. Use the steps you \
+the spec exists at its own gated route and is kept out of the customer nav. A thin site is a failed build. Use the steps you \
 have; write several files per step when they are independent.
 9. Follow-up edits are the opposite: the smallest change that does the job, leaving \
 everything else as it is.

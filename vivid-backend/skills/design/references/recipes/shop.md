@@ -33,5 +33,6 @@ the store; orders when a backend exists. Prices in the spec's currency, formatte
 Minimums for a first build: 8 to 12 products across at least three categories, each with a
 name, brand, colourway, price, two-line description, sizes or variants, stock, and an image
 (uploaded or generated); a brands strip that lists only brands present in the data; every
-page above exists and is in the nav (including About and Admin when the spec has them);
+customer page above exists and is in the nav; Admin exists at /admin behind a gate and out of
+the customer nav;
 the cart works end to end to the order screen.
