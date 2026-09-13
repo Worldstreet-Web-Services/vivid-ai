@@ -411,7 +411,10 @@ class TurnRunner:
             self.result.steps += 1
             yield stream.start_step()
 
-            call_step = ModelStep(messages, tools.schemas_for(self.backend, self.images), endpoint)
+            # Once the picture budget is spent the tool goes away: a refused
+            # call still costs a step, and the model keeps trying otherwise.
+            images = self.images if (self.images is not None and self.images.left > 0) else None
+            call_step = ModelStep(messages, tools.schemas_for(self.backend, images), endpoint)
             async for part in call_step.run():
                 yield part
             if call_step.failed is not None:

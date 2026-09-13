@@ -24,7 +24,8 @@ class ScriptedModel:
     async def stream_chat(self, messages, tools, max_tokens=None, endpoint=None,
                           temperature=None):
         # A copy: the loop keeps appending to the same list.
-        self.requests.append({"messages": [dict(m) for m in messages], "model": endpoint.model})
+        self.requests.append({"messages": [dict(m) for m in messages], "model": endpoint.model,
+                              "tools": [t["function"]["name"] for t in tools]})
         if not self.script:
             text, calls = "Done.", []
         else:

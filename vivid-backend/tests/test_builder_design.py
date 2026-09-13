@@ -566,3 +566,40 @@ async def test_logo_also_becomes_the_favicon(monkeypatch):
     assert 'rel="icon"' in sb.files["index.html"] and "apple-touch-icon" in sb.files["index.html"]
     assert images_mod.with_favicon_links(sb.files["index.html"]) == sb.files["index.html"]   # once
     assert sb.blobs["public/uploads/mark.png"][:4] == b"\x89PNG"                           # logos stay PNG
+
+
+async def test_picture_tool_disappears_once_the_budget_is_spent(monkeypatch):
+    from app.builder import images as images_mod
+    from app.services.models_gateway import media
+    from tests.test_builder_assets import png
+
+    async def fake_generate(prompt, aspect_ratio="1:1"):
+        return png(8, 8), "image/png"
+    monkeypatch.setattr(media, "generate_image", fake_generate)
+
+    class FakeAsset:
+        def __init__(self, name): self.name, self.meta = name, {"width": 8, "height": 8}
+
+    async def fake_add(db, project_id, filename, mime, data): return FakeAsset(filename)
+
+    class FakeSession:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        def add(self, row): pass
+        async def commit(self): pass
+    monkeypatch.setattr(images_mod.assets, "add", fake_add)
+    monkeypatch.setattr(images_mod, "async_session", lambda: FakeSession())
+    monkeypatch.setattr(settings, "BUILDER_CRITIQUE_ROUNDS", 0)
+
+    sb = FakeSandbox({"src/App.tsx": "x"})
+    maker = images_mod.ImageMaker("p1", sb, limit=1)
+    model = ScriptedModel([
+        ("One picture.", [call("generate_image", {"prompt": "a red sneaker on grey", "name": "one"}, "c1")]),
+        ("Now code.", [call("write_file", {"path": "src/A.tsx", "content": "export {}"}, "c2")]),
+        ("Done.", []),
+    ])
+    monkeypatch.setattr(code_llm, "stream_chat", model.stream_chat)
+    runner = TurnRunner(sb, routing.EDIT, [], "pictures then code", images=maker)
+    await collect(runner)
+    assert "generate_image" in model.requests[0]["tools"]
+    assert "generate_image" not in model.requests[1]["tools"]        # budget spent
