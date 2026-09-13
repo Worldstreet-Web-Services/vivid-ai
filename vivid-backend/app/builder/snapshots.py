@@ -74,7 +74,7 @@ async def take(db: AsyncSession, sandbox: Sandbox, project: BuilderProject,
 
     tar = _tar_path(sandbox)
     excludes = " ".join(f"--exclude=./{e}" for e in EXCLUDES)
-    result = await sandbox.run(f"tar -czf {tar} {excludes} . && rm -f {tar}.err", timeout=120)
+    result = await sandbox.run(f"tar -czf {tar} {excludes} . && rm -f {tar}.err", timeout=300)
     if not result.ok:
         raise SnapshotError(f"tar failed: {result.output[:300]}")
     try:
@@ -111,7 +111,7 @@ async def restore(sandbox: Sandbox, snapshot: BuilderSnapshot) -> None:
         "find . -mindepth 1 -maxdepth 1 ! -name node_modules -exec rm -rf {} + "
         f"&& tar -xzf {tar} && rm -f {tar} && ("
         "[ -d .git ] || (git init -q -b main && git add -A "
-        f"&& git {_GIT_IDENTITY} commit -q -m 'restored'))", timeout=120)
+        f"&& git {_GIT_IDENTITY} commit -q -m 'restored'))", timeout=300)
     if not result.ok:
         raise SnapshotError(f"restore failed: {result.output[:300]}")
     after = await _package_hash(sandbox)
