@@ -536,6 +536,21 @@ def test_supabase_manual_link_gives_env_but_no_tools(client, monkeypatch, fake_m
     client.post(f"/v1/builder/projects/{pid}/chat", json={"text": "build"})
     assert "apply_migration" in seen[-1] and "deploy_edge_function" not in seen[-1]
 
+    # Payments on a database-only project: the public key goes to .env, and
+    # nothing is asked of a management API that is not there.
+    from app.services.connectors import paystack as paystack_connector
+
+    async def verify_ps(token, config=None):
+        return {"login": "test", "mode": "test", "config": {"public_key": config["public_key"], "mode": "test"}}
+    monkeypatch.setattr(paystack_connector, "verify", verify_ps)
+    from app.api.routes.connectors import router as connectors_router
+    client.app.include_router(connectors_router, prefix="/v1")
+    r = client.post("/v1/connectors", json={"provider": "paystack", "token": "sk_test_" + "a" * 24,
+                                            "public_key": "pk_test_" + "b" * 24})
+    assert r.status_code == 201, r.text
+    r = client.post(f"/v1/builder/projects/{pid}/payments")
+    assert r.status_code == 200 and r.json()["payments_provider"] == "paystack"
+
 
 def test_supabase_oauth_routes(client, maker, monkeypatch):
     """authorize hands back a URL and parks state in redis; the callback

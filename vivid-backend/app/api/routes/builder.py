@@ -494,7 +494,9 @@ async def enable_payments(project_id: str, user: User = Depends(get_current_user
     project.payments_provider = "paystack"
     await db.commit()
     backend = await _backend_for(project, user, db)
-    if backend is not None:
+    if backend is not None and backend.can_functions:
+        # Only a management token can set function secrets; a database-only
+        # link leaves the secret to the README the build writes.
         try:
             await backend.api.set_secrets(
                 backend.ref, {"PAYSTACK_SECRET_KEY": connector_tokens.read(connector.token)})
