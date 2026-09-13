@@ -90,7 +90,7 @@ generated images is 15 to 25 minutes on the current models; an edit turn is
 POST   /builder/projects            {name?: string, skip_plan?: boolean}   -> Project (201)
 GET    /builder/projects                                                  -> Project[]
 GET    /builder/projects/{id}                                             -> Project
-PATCH  /builder/projects/{id}       {name?, spec_md?, fullstack?}          -> Project
+PATCH  /builder/projects/{id}       {name?, spec_md?, fullstack?, recipe?} -> Project
 DELETE /builder/projects/{id}                                             -> 204 (kills sandbox, deletes snapshots and files)
 
 Project:
@@ -104,6 +104,7 @@ Project:
   supabase_project_ref: string | null,
   payments_provider: "none" | "paystack",
   fullstack: boolean,             // accounts + server-side data were asked for (plan sets it)
+  recipe: string | null,          // design recipe the plan chose (shop, booking, platform, ...)
   published_url: string | null,
   created_at, updated_at
 }
@@ -350,6 +351,12 @@ Then per project:
   POST   /builder/projects/{id}/supabase {project_ref}            -> Project (backend_mode "byo")
          pick project_ref from the connector's `projects` list
   POST   /builder/projects/{id}/supabase {project_ref, url?, anon_key}   keys pasted, no connector (app env only, no tools)
+  POST   /builder/projects/{id}/supabase {project_ref, url?, anon_key, database_url}
+         keys plus the Postgres connection string from the dashboard's Connect panel
+         (Session pooler URI): the builder applies migrations itself, so accounts,
+         roles and /admin work without an account link. Edge functions and secrets
+         still need the connector; until then they are written as files. A bad
+         connection string answers 400 "Could not connect to the database: ...".
   DELETE /builder/projects/{id}/supabase
 From then on the model has migration, edge-function and secret tools, and the
 app has VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.

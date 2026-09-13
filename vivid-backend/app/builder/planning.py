@@ -15,7 +15,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import AsyncIterator, Callable
 
-from app.builder import routing, stream
+from app.builder import routing, skills, stream
 from app.builder import meta
 from app.builder.loop import ModelStep
 
@@ -74,6 +74,11 @@ SCHEMAS = [
             "type": "object",
             "properties": {
                 "markdown": {"type": "string"},
+                "recipe": {
+                    "type": "string",
+                    "description": (
+                        "The page recipe closest to this app, by name from the list in "
+                        "the instructions; omit when none fits.")},
                 "fullstack": {
                     "type": "boolean",
                     "description": (
@@ -85,6 +90,16 @@ SCHEMAS = [
             "required": ["markdown"],
         }}},
 ]
+
+def tool_schemas() -> list[dict]:
+    """The plan tools with the recipe list of the moment: recipes are files,
+    so the enum is read when a turn starts, not when the module loads."""
+    out = json.loads(json.dumps(SCHEMAS))
+    names = skills.recipe_names()
+    if names:
+        out[1]["function"]["parameters"]["properties"]["recipe"]["enum"] = names
+    return out
+
 
 SYSTEM = """You are Vivid, planning a web app with the user before it is built. The user \
 may not be a developer. The app will be a React single-page app built from a template \
@@ -118,6 +133,10 @@ anything still open rather than asking again. \
 If files were uploaded, name them in the spec where they are used (the logo in the \
 header, each product photo on its product).
 
+Pick the page recipe closest to the app for write_spec's `recipe` (the builder \
+follows it for pages and sections):
+{recipes}
+
 The spec has exactly these headings, in this order, each with a few plain lines or \
 bullets: Goal, Users, Pages, Data model, Integrations, Out of scope. Pages lists each \
 page and what is on it. Data model lists each thing the app stores and its fields. \
@@ -138,6 +157,7 @@ class PlanResult:
     spec_md: str | None = None
     questions: list[dict] | None = None
     fullstack: bool = False
+    recipe: str | None = None
     #: The expanded brief from the first turn's meta-prompt.
     brief_md: str | None = None
     calls: list = field(default_factory=list)
@@ -237,7 +257,8 @@ class PlanRunner:
         yield stream.start(self.message_id)
         endpoint = routing.endpoint_for(routing.PLAN)
         self.result.model = endpoint.model
-        system = SYSTEM + ("\n" + self.assets_block if self.assets_block else "")
+        system = SYSTEM.replace("{recipes}", skills.recipe_menu() or "- (none on disk)")
+        system += ("\n" + self.assets_block if self.assets_block else "")
         messages = [{"role": "system", "content": system}]
         messages += self.history
 
@@ -273,7 +294,7 @@ class PlanRunner:
                 break
             self.result.steps += 1
             yield stream.start_step()
-            call_step = ModelStep(messages, SCHEMAS, endpoint)
+            call_step = ModelStep(messages, tool_schemas(), endpoint)
             async for part in call_step.run():
                 yield part
             if call_step.failed is not None:
@@ -339,6 +360,8 @@ class PlanRunner:
                 return f"error: {problem}.", False
             self.result.spec_md = spec
             self.result.fullstack = bool(args.get("fullstack", False))
+            recipe = str(args.get("recipe") or "").strip().lower()
+            self.result.recipe = recipe if recipe in skills.recipe_names() else None
             self.result.reason = SPEC_WRITTEN
             return "Spec saved. Tell the user what it covers in one or two sentences.", False
         return f"error: no tool named {call['name']!r} in plan mode.", False

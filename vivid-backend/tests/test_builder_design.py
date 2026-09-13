@@ -26,18 +26,41 @@ def env(monkeypatch):
     skills.clear_cache()
 
 
-def test_recipe_routing_and_block():
+def test_recipes_come_from_disk_and_the_block_carries_the_chosen_one():
     assert skills.available() == ["copy", "design", "fullstack", "payments"]
-    assert skills.recipe_for("an ecommerce website for my sneakers") == "shop"
-    assert skills.recipe_for("a booking app for my salon") == "booking"
-    assert skills.recipe_for("landing page for a bakery") == "landing"
-    assert skills.recipe_for("expense tracker with an admin view") == "dashboard"
-    assert skills.recipe_for("todo list") is None
-    block = skills.design_block("# Spec\nSell sneakers online", "")
+    names = skills.recipe_names()
+    assert names == ["booking", "dashboard", "landing", "platform", "portfolio", "shop"]
+    menu = skills.recipe_menu()
+    assert "- platform: platform (delivery, logistics" in menu and "- shop: shop" in menu
+    block = skills.design_block("# Spec\nSell sneakers online", "", recipe="shop")
     assert block.startswith("## Design skill\n# Design method")
     assert "Recipe: shop" in block and "Recipe: booking" not in block
-    assert "| forest |" in block and "Space Grotesk" in block
+    assert "| forest |" in block and "| navy-lime |" in block and "Space Grotesk" in block
     assert "name: design" not in block                      # frontmatter stripped
+    assert "Black Nigerian" in block and "ProductMockup" in block
+    none = skills.design_block("# Spec\nSell sneakers online", "")
+    assert "Recipe:" not in none                            # no guess from keywords
+    assert "Recipe:" not in skills.design_block("x", "", recipe="not-a-recipe")
+
+
+async def test_pick_recipe_asks_the_plan_model_once(monkeypatch):
+    calls = []
+
+    async def stream_chat(messages, tools, max_tokens=None, endpoint=None, temperature=None):
+        calls.append(messages[0]["content"])
+        yield {"type": "token", "text": " Platform.\n"}
+        yield {"type": "done", "finish_reason": "stop", "usage": None}
+    monkeypatch.setattr(code_llm, "stream_chat", stream_chat)
+    monkeypatch.setattr(settings, "PLAN_MODEL", "vendor/planner")
+    assert await skills.pick_recipe("a delivery app for Lagos") == "platform"
+    assert "- platform:" in calls[0] and "a delivery app" in calls[0]
+    assert await skills.pick_recipe("") is None
+
+    async def broken(*a, **k):
+        raise RuntimeError("down")
+        yield
+    monkeypatch.setattr(code_llm, "stream_chat", broken)
+    assert await skills.pick_recipe("anything") is None
 
 
 def test_skill_can_be_turned_off(monkeypatch):
@@ -64,7 +87,7 @@ def test_fullstack_skill_only_with_a_backend(monkeypatch):
 
 def test_copy_skill_rides_with_the_design_skill():
     assert skills.available() == ["copy", "design", "fullstack", "payments"]
-    block = skills.ui_block("# Spec\nA salon booking app", "")
+    block = skills.ui_block("# Spec\nA salon booking app", "", recipe="booking")
     assert "## Design skill" in block and "## Copy skill" in block
     assert block.index("## Design skill") < block.index("## Copy skill")
     assert "Recipe: booking" in block
@@ -122,7 +145,7 @@ async def test_turn_critiques_after_answering(monkeypatch):
 
     sb = FakeSandbox({"src/App.tsx": "x"})
     runner = TurnRunner(sb, routing.BUILD, [], "a shop", spec_md="# Spec\nA sneaker shop",
-                        project_id="p1")
+                        project_id="p1", recipe="shop")
     parts, c = await collect(runner)
     assert runner.result.reason == loop.ANSWERED and runner.result.critique_rounds == 1
     assert runner.result.steps == 4 and sb.files["src/App.tsx"] == "v2"
@@ -314,8 +337,8 @@ async def test_generate_image_kinds(monkeypatch):
     await maker.make("a lightning bolt in a circle", "mark", aspect="wide", kind="logo")
     await maker.make("three sneakers on a dark table", "hero", aspect="wide", kind="lifestyle")
     await maker.make("a white sneaker", "shoe", aspect="square")
-    assert prompts[0][1] == "1:1" and "no text" in prompts[0][0] and "vector-style logo" in prompts[0][0]
-    assert prompts[1][1] == "16:9" and "dramatic" in prompts[1][0]
+    assert prompts[0][1] == "1:1" and "no text" in prompts[0][0] and "app-icon style logo" in prompts[0][0]
+    assert prompts[1][1] == "16:9" and "premium brand campaign" in prompts[1][0]
     assert "product photography" in prompts[2][0]
 
 

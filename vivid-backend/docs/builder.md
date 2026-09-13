@@ -205,6 +205,7 @@ POST   /v1/connectors {provider: "supabase", token: "sbp_..."}   a pasted person
 GET    /v1/connectors                       each connector; Supabase rows list `projects`
 POST   /v1/builder/projects/{id}/supabase  {project_ref} -> project (backend_mode: byo)
                                             or {project_ref, url?, anon_key} with no connector
+                                            + database_url (Postgres DSN): migrations over Postgres, no connector needed
 DELETE /v1/builder/projects/{id}/supabase  unlink
 ```
 

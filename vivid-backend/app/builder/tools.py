@@ -128,14 +128,26 @@ _MIGRATION_NAME = re.compile(r"^[a-z][a-z0-9_]{1,62}$")
 
 @dataclass
 class Backend:
-    """The Supabase project a turn may act on: its ref and a live
-    Management API token. Built by the route, never by the model."""
+    """The Supabase project a turn may act on. With a Management API token
+    every tool works; with only a database connection string, migrations
+    run over Postgres and the function and secret tools are withheld.
+    Built by the route, never by the model."""
     ref: str
-    token: str
+    token: str | None = None
+    database_url: str | None = None
+
+    @property
+    def can_functions(self) -> bool:
+        return bool(self.token)
 
     @property
     def api(self) -> Management:
+        if not self.token:
+            raise RuntimeError("no management token for this backend")
         return Management(self.token)
+
+
+FUNCTION_TOOLS = {"deploy_edge_function", "set_secret"}
 
 
 def schemas_for(backend: "Backend | None", images: "ImageMaker | None" = None) -> list[dict]:
@@ -143,7 +155,8 @@ def schemas_for(backend: "Backend | None", images: "ImageMaker | None" = None) -
     if images is not None:
         out += IMAGE_SCHEMAS
     if backend is not None:
-        out += SUPABASE_SCHEMAS
+        out += [s for s in SUPABASE_SCHEMAS
+                if backend.can_functions or s["function"]["name"] not in FUNCTION_TOOLS]
     return out
 
 #: Commands the model may not run, whatever it says it is doing. Matched
@@ -208,6 +221,10 @@ async def execute(name: str, args: dict, sandbox: Sandbox,
     if name in SUPABASE_NAMES:
         if backend is None:
             return Outcome(f"error: {name} needs a Supabase backend linked to this project.")
+        if name in FUNCTION_TOOLS and not backend.can_functions:
+            return Outcome(f"error: {name} needs the user's Supabase account connected; write "
+                           "the function as a file under supabase/functions/ instead and "
+                           "tell the user to deploy it.")
         try:
             outcome = await _SUPABASE_HANDLERS[name](args, backend)
         except SupabaseError as e:
@@ -257,7 +274,14 @@ async def _apply_migration(args: dict, backend: Backend) -> Outcome:
         return Outcome("error: sql is required")
     if not _MIGRATION_NAME.match(name):
         return Outcome("error: name must be short snake_case, e.g. create_bookings")
-    await backend.api.apply_migration(backend.ref, sql, name)
+    if backend.token:
+        await backend.api.apply_migration(backend.ref, sql, name)
+    else:
+        from app.builder import pgdirect
+        try:
+            await pgdirect.apply_migration(backend.database_url, sql, name)
+        except pgdirect.DirectError as e:
+            return Outcome(f"error: migration {name} failed: {e}")
     return Outcome(f"Migration {name} applied.")
 
 

@@ -73,6 +73,13 @@ The service key is only ever used inside edge functions.
 - Types: define the row types in src/lib/types.ts next to the queries.
 """
 
+SUPABASE_NO_FUNCTIONS = """- This project is linked with its database connection only, so \
+apply_migration works but deploy_edge_function and set_secret are NOT available. Write each \
+edge function as `supabase/functions/<name>/index.ts` and list the secrets it needs by name in \
+`supabase/README.md`; in the final reply tell the user in one sentence to deploy them with the \
+Supabase CLI or to connect their Supabase account in Connectors so the builder can.
+"""
+
 
 SUPABASE_ENV_ONLY = """## Backend: Supabase (client linked, no management access)
 - The client is ready: `import { supabase } from "@/lib/supabase"`. It reads \
@@ -102,15 +109,17 @@ real. Do not fake sign-in with a hard-coded user list.
 
 def system_prompt(spec_md: str | None, context_block: str, backend: bool = False,
                   assets_block: str = "", skill_block: str = "",
-                  fullstack: bool = False, backend_env: bool = False) -> str:
-    """`backend`: the management tools exist this turn. `backend_env`: the
-    app has a Supabase client (URL and anon key) but no tools. `fullstack`:
-    the user asked for accounts and server-side data."""
+                  fullstack: bool = False, backend_env: bool = False,
+                  functions: bool = True) -> str:
+    """`backend`: the migration tool exists this turn (`functions`: the
+    function and secret tools too). `backend_env`: the app has a Supabase
+    client (URL and anon key) but no tools. `fullstack`: the user asked for
+    accounts and server-side data."""
     parts = [STATIC]
     if skill_block:
         parts.append("\n" + skill_block)
     if backend:
-        parts.append("\n" + SUPABASE)
+        parts.append("\n" + SUPABASE + ("" if functions else SUPABASE_NO_FUNCTIONS))
     elif backend_env:
         parts.append("\n" + SUPABASE_ENV_ONLY)
     elif fullstack:

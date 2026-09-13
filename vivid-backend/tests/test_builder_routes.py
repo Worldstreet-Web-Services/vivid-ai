@@ -367,7 +367,7 @@ def test_plan_mode_then_build(client, monkeypatch, fake_manager):
         elif "ask_user" in names and len(seen) == 3:
             yield {"type": "tool_calls", "calls": [
                 {"id": "c2", "name": "write_spec", "error": None,
-                 "arguments": {"markdown": SPEC, "fullstack": True}}]}
+                 "arguments": {"markdown": SPEC, "fullstack": True, "recipe": "booking"}}]}
         elif "ask_user" in names:
             yield {"type": "token", "text": "Spec ready; edit it or build."}
         else:
@@ -395,6 +395,7 @@ def test_plan_mode_then_build(client, monkeypatch, fake_manager):
     proj = client.get(f"/v1/builder/projects/{pid}").json()
     assert proj["mode"] == "plan" and proj["spec_md"] == SPEC.strip()
     assert proj["fullstack"] is True                            # the plan asked for accounts
+    assert proj["recipe"] == "booking"
     assert client.patch(f"/v1/builder/projects/{pid}", json={"fullstack": False}).json()["fullstack"] is False
     client.patch(f"/v1/builder/projects/{pid}", json={"fullstack": True})
     msgs = client.get(f"/v1/builder/projects/{pid}/messages").json()
@@ -409,6 +410,7 @@ def test_plan_mode_then_build(client, monkeypatch, fake_manager):
     parts = sse_parts(client.post(f"/v1/builder/projects/{pid}/chat", json={"text": "build it"}).text)
     assert seen[-1][0][0] == "read_file" and seen[-1][1] == "vendor/builder"
     assert "Also: dark mode." in seen[-1][2]                     # spec injected into the prompt
+    assert "Recipe: booking" in seen[-1][2]
     assert "Backend: not linked yet" in seen[-1][2]              # full-stack asked, no Supabase yet
     assert "App logic skill" not in seen[-1][2]
     assert fake_manager.sandbox.files["spec.md"] == edited       # and written to the sandbox
@@ -423,6 +425,25 @@ def test_skip_plan_starts_in_build_mode(client, monkeypatch, fake_manager):
     assert client.get(f"/v1/builder/projects/{pid}").json()["mode"] == "build"
     client.post(f"/v1/builder/projects/{pid}/chat", json={"text": "go"})
     assert not fake_manager.fresh and "spec.md" not in fake_manager.sandbox.files
+    assert client.get(f"/v1/builder/projects/{pid}").json()["recipe"] is None   # nothing to go on
+
+
+def test_skip_plan_with_a_brief_picks_a_recipe_once(client, monkeypatch, fake_manager):
+    from app.builder import skills
+    picks = []
+
+    async def pick(text):
+        picks.append(text)
+        return "shop"
+    monkeypatch.setattr(skills, "pick_recipe", pick)
+    script(monkeypatch, [("Built.", []), ("Built.", [])])
+    pid = client.post("/v1/builder/projects", json={"skip_plan": True}).json()["id"]
+    client.patch(f"/v1/builder/projects/{pid}", json={"spec_md": "# Spec\nA sneaker shop"})
+    client.post(f"/v1/builder/projects/{pid}/chat", json={"text": "go"})
+    assert client.get(f"/v1/builder/projects/{pid}").json()["recipe"] == "shop"
+    client.post(f"/v1/builder/projects/{pid}/chat", json={"text": "more"})
+    assert len(picks) == 1                                       # stored, not asked again
+    assert client.patch(f"/v1/builder/projects/{pid}", json={"recipe": "booking"}).json()["recipe"] == "booking"
 
 
 def test_supabase_link_env_and_tools(client, maker, monkeypatch, fake_manager):
@@ -493,6 +514,27 @@ def test_supabase_manual_link_gives_env_but_no_tools(client, monkeypatch, fake_m
     client.post(f"/v1/builder/projects/{pid}/chat", json={"text": "build"})
     assert fake_manager.sandbox.files[".env"].startswith("VITE_SUPABASE_URL=https://abcdef.supabase.co\n")
     assert "apply_migration" not in seen[-1]
+
+    # A pasted connection string: verified, kept encrypted, and the
+    # migration tool appears; functions and secrets do not.
+    from app.builder import pgdirect
+    verified = []
+
+    async def verify(dsn):
+        verified.append(dsn)
+        if "bad" in dsn:
+            raise pgdirect.DirectError("password authentication failed")
+    monkeypatch.setattr(pgdirect, "verify", verify)
+    r = client.post(f"/v1/builder/projects/{pid}/supabase",
+                    json={"project_ref": "abcdef", "anon_key": "sb_publishable_q",
+                          "database_url": "postgresql://postgres:bad@db.abcdef.supabase.co:5432/postgres"})
+    assert r.status_code == 400 and "Could not connect" in r.json()["detail"]
+    r = client.post(f"/v1/builder/projects/{pid}/supabase",
+                    json={"project_ref": "abcdef", "anon_key": "sb_publishable_q",
+                          "database_url": "postgresql://postgres:pw@db.abcdef.supabase.co:5432/postgres"})
+    assert r.status_code == 200 and len(verified) == 2
+    client.post(f"/v1/builder/projects/{pid}/chat", json={"text": "build"})
+    assert "apply_migration" in seen[-1] and "deploy_edge_function" not in seen[-1]
 
 
 def test_supabase_oauth_routes(client, maker, monkeypatch):

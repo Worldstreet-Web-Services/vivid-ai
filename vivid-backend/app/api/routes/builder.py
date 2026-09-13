@@ -46,7 +46,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
-from app.builder import (assets, blob, images, planning, publish, routing, secrets,
+from app.builder import (assets, blob, images, pgdirect, planning, publish, routing, secrets, skills,
                          snapshots, stream, supabase, tools, usage)
 from app.builder.loop import ModelCall, TurnRunner, turns
 from app.builder.planning import PlanRunner
@@ -123,6 +123,8 @@ async def update_project(project_id: str, body: ProjectUpdate,
         project.spec_md = body.spec_md
     if body.fullstack is not None:
         project.fullstack = body.fullstack
+    if body.recipe is not None:
+        project.recipe = body.recipe.strip().lower() or None
     await db.commit()
     return project
 
@@ -208,6 +210,10 @@ async def chat(project_id: str, body: ChatIn, request: Request,
 
     spec_md, recent = project.spec_md, _recent(project)
     payments = project.payments_provider if project.payments_provider != "none" else None
+    if not planning_mode and project.recipe is None and (spec_md or project.brief_md):
+        # A project that skipped plan mode still gets a recipe, chosen once.
+        project.recipe = await skills.pick_recipe(spec_md or project.brief_md or "")
+        await db.commit()
     backend = None if planning_mode else await _backend_for(project, user, db)
     env_vars = None if planning_mode else await _env_for(project, db)
     uploaded = await assets.list_for(db, project_id)
@@ -245,7 +251,7 @@ async def chat(project_id: str, body: ChatIn, request: Request,
             runner = TurnRunner(sandbox, stage, history, body.text, spec_md, recent,
                                 cancelled=cancel.is_set, backend=backend,
                                 assets_block=assets_block, payments=payments,
-                                fullstack=project.fullstack,
+                                fullstack=project.fullstack, recipe=project.recipe,
                                 backend_env=bool(env_vars and "VITE_SUPABASE_URL" in env_vars),
                                 keepalive=lambda: manager.touch(project_id),
                                 project_id=project_id,
@@ -327,6 +333,7 @@ async def _persist_plan_turn(project_id: str, collector: stream.PartsCollector,
             if runner.result.spec_md:
                 project.spec_md = runner.result.spec_md
                 project.fullstack = runner.result.fullstack
+                project.recipe = runner.result.recipe
             if runner.result.brief_md:
                 project.brief_md = runner.result.brief_md
             await usage.record_model(db, project_id, [
@@ -396,6 +403,11 @@ async def _backend_for(project: BuilderProject, user: User,
         return None
     connector = await _supabase_connector(user.id, db)
     if connector is None:
+        # No account link: a pasted connection string still gives the
+        # migration tool (SQL over Postgres); functions and secrets stay off.
+        dsn = await secrets.get_secret(db, project.id, "SUPABASE_DATABASE_URL")
+        if dsn:
+            return tools.Backend(ref=project.supabase_project_ref, database_url=dsn)
         return None
     try:
         token = await supabase_connector.access_token(db, connector)
@@ -439,6 +451,12 @@ async def link_supabase(project_id: str, body: SupabaseLinkIn, request: Request,
                            "Connect Supabase first, or pass url and anon_key.")
         url = body.url or f"https://{body.project_ref}.supabase.co"
         anon = body.anon_key
+    if body.database_url:
+        try:
+            await pgdirect.verify(body.database_url)
+        except pgdirect.DirectError as e:
+            raise APIError(400, "bad_request", f"Could not connect to the database: {e}")
+        await secrets.set_secret(db, project_id, "SUPABASE_DATABASE_URL", body.database_url)
     await secrets.set_secret(db, project_id, "SUPABASE_URL", url)
     await secrets.set_secret(db, project_id, "SUPABASE_ANON_KEY", anon)
     project.backend_mode = "byo"

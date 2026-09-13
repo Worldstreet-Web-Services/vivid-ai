@@ -25,16 +25,19 @@ ASPECTS = {"square": "1:1", "landscape": "4:3", "wide": "16:9", "portrait": "3:4
 #: What gets added to the model's prompt per kind. Photos are the default.
 #: A logo is a flat mark with no text: the brand name is set in type next to
 #: it, which stays sharp; the mark gives the wordmark a face.
+#: The apps are built for Nigerian businesses: any person in a picture is
+#: Black African unless the prompt says otherwise, and marks are premium.
+PEOPLE = "Any people shown are Black African (Nigerian), natural and confident."
 STYLES = {
     "photo": ("Photorealistic product photography, soft studio light, clean uncluttered "
-              "background, sharp focus, no text, no watermark, no logo."),
-    "lifestyle": ("Editorial lifestyle photograph, dramatic directional light, shallow depth "
-                  "of field, dark moody background, cinematic, no text, no watermark."),
-    "logo": ("Flat vector-style logo mark, a single simple geometric symbol, bold clean "
-             "shapes, one or two colours, centered on a plain solid background, no text, "
-             "no letters, no words, no gradients, no photo."),
-    "illustration": ("Clean flat illustration, simple shapes, limited palette, no text, "
-                     "no watermark."),
+              f"background, sharp focus, no text, no watermark, no logo. {PEOPLE}"),
+    "lifestyle": ("Editorial lifestyle photograph, natural directional light, shallow depth "
+                  f"of field, cinematic, premium brand campaign, no text, no watermark. {PEOPLE}"),
+    "logo": ("Modern app-icon style logo mark: one bold simple symbol, vibrant two-colour "
+             "gradient with a subtle highlight, smooth rounded geometry, centered on a plain "
+             "solid background, high contrast, no text, no letters, no words, no photo."),
+    "illustration": ("Clean modern flat illustration with soft gradients and rounded shapes, "
+                     f"limited palette, no text, no watermark. {PEOPLE}"),
 }
 
 

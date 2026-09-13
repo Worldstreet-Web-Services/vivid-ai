@@ -179,12 +179,15 @@ class TurnRunner:
                  images=None,
                  payments: str | None = None,
                  fullstack: bool = False,
-                 backend_env: bool = False) -> None:
+                 backend_env: bool = False,
+                 recipe: str | None = None) -> None:
         self.sandbox = sandbox
         self.backend = backend
         #: The app has a Supabase client (keys pasted) but this turn has no
         #: management tools: migrations and functions are written as files.
         self.backend_env = backend_env
+        #: The design recipe the plan chose for this project.
+        self.recipe = recipe
         #: The user asked for accounts and server-side data (plan or client
         #: set it). Adds the app-logic skill when a backend is linked.
         self.fullstack = fullstack
@@ -268,8 +271,10 @@ class TurnRunner:
                          assets_block=self.assets_block,
                          skill_block=skills.ui_block(self.spec_md, self.user_text,
                                                     payments=self.payments,
-                                                    backend=self._app_logic),
-                         fullstack=self.fullstack, backend_env=self.backend_env)}]
+                                                    backend=self._app_logic,
+                                                    recipe=self.recipe),
+                         fullstack=self.fullstack, backend_env=self.backend_env,
+                         functions=self.backend is None or self.backend.can_functions)}]
         messages += self.history
         messages.append({"role": "user", "content": self.user_text})
 
@@ -285,9 +290,18 @@ class TurnRunner:
         critique_always = first_build or _about_looks(self.user_text)
         nudges_left = 2
         review_deadline = None
+        extended = False
         step = 0
         while True:
             step += 1
+            if step > budget and first_build and not extended and strikes == 0 \
+                    and review_deadline is None and not self.result.completion_rounds \
+                    and not self.result.critique_rounds:
+                # Still writing clean files at the cap: more steps for this
+                # model beat a handover that re-reads everything.
+                extended = True
+                budget += settings.BUILDER_BUILD_EXTENSION_STEPS
+                yield stream.data("status", {"text": "Still building, a few more steps"})
             if step > budget:
                 if (review_deadline is not None and step > review_deadline
                         and critique_left > 0 and self.result.touched):
@@ -351,6 +365,7 @@ class TurnRunner:
                     messages.append({"role": "user", "content": brief})
                     budget = step + settings.BUILDER_COMPLETION_STEPS
                     review_deadline = budget
+                    strikes = 0                          # a new phase, a fresh count
                     if self.keepalive is not None:
                         await self.keepalive()
                     continue

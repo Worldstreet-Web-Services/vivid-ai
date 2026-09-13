@@ -484,3 +484,41 @@ budget of a first build that is still writing clean files instead of
 swapping models; end a turn on a clean typecheck, never mid-edit (the
 critique round should not start an edit it cannot finish); parallel image
 generation; show the preview during the turn.
+
+## 15. Premium platforms, dynamic recipes, direct database (2026-09-13)
+
+The user's review of SwiftDrop: "the frontend wasn't nice, not premium",
+raw Supabase errors on screen, faces in generated photos not African, and
+a reference (Tango Fuel App: light, navy + lime, product mockups in the
+hero, illustration tiles, dark CTA band, rich footer). Also: the recipe
+keyword table "should be dynamic". Changes:
+
+- Recipes are read from `skills/design/references/recipes/*.md`; the plan
+  model picks one by name in `write_spec.recipe` (enum built per turn from
+  the folder); `project.recipe` stores it; a project that skipped plan mode
+  gets one from a single short model call (`skills.pick_recipe`) stored on
+  first build. The keyword table is gone. Adding a recipe = adding a file.
+- New `platform` recipe (Tango-shaped: eyebrow pills, three-line headline,
+  ProductMockup component with real seeded data in a device frame, six
+  benefit tiles, feature rows, dark CTA band, role section, footer in the
+  primary), palettes `navy-lime`, `navy-orange`, `green-cream` with the
+  two-tone rule, and imagery rules: every person is Black African (also
+  baked into the image styles), platforms show the product not stock
+  photos, logos are gradient app-icon marks.
+- Roles: `/admin` is the owner's front door (sign-in form when signed out,
+  dashboard when signed in); the customer nav follows the session.
+- Fullstack skill: the admin account is created by a `seed_admin` migration
+  (auth.users + identities with a bcrypt password), credentials in the
+  README and the final reply; `friendlyError` maps Supabase errors to
+  sentences, "database not set up yet" included; never render
+  `error.message`.
+- Direct database link: `POST .../supabase` accepts `database_url` (the
+  dashboard's connection string). `app/builder/pgdirect.py` verifies it and
+  applies migrations in a transaction, recording them in
+  `supabase_migrations.schema_migrations`; `Backend` carries either a
+  management token or a DSN; the function and secret tools are withheld
+  without a token and the prompt says to write them as files. This is what
+  makes /admin work for real without a PAT or OAuth app.
+- Loop: a first build at its step cap with a clean typecheck gets one
+  extension (`BUILDER_BUILD_EXTENSION_STEPS`, 20) before the model swap;
+  the completeness review starts with a fresh strike count.

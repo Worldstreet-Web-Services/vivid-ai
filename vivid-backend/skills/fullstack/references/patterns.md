@@ -53,6 +53,46 @@ where id = (select id from public.profiles order by created_at limit 1)
   and not exists (select 1 from public.profiles where role = 'admin');
 ```
 
+## Migration: the admin account (`seed_admin`)
+```sql
+create extension if not exists pgcrypto;
+do $$
+declare uid uuid := gen_random_uuid();
+begin
+  if not exists (select 1 from auth.users where email = 'admin@brand.app') then
+    insert into auth.users (id, instance_id, aud, role, email, encrypted_password,
+      email_confirmed_at, raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
+    values (uid, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
+      'admin@brand.app', crypt('Xk7pQ2mN9vLd', gen_salt('bf')), now(),
+      '{"provider":"email","providers":["email"]}', '{"full_name":"Owner"}', now(), now());
+    insert into auth.identities (id, user_id, provider_id, provider, identity_data,
+      last_sign_in_at, created_at, updated_at)
+    values (gen_random_uuid(), uid, uid::text, 'email',
+      jsonb_build_object('sub', uid::text, 'email', 'admin@brand.app'), now(), now(), now());
+  end if;
+end $$;
+update public.profiles set role = 'admin'
+  where id = (select id from auth.users where email = 'admin@brand.app');
+```
+The profile row exists because `handle_new_user` fired on the insert. Use the spec's brand
+slug in the email and a fresh random password; both go in `supabase/README.md` and the final reply.
+
+## src/lib/errors.ts
+```ts
+export function friendlyError(e: unknown, audience: "customer" | "admin" = "customer"): string {
+  const msg = (e as { message?: string; code?: string })?.message ?? "";
+  const code = (e as { code?: string })?.code ?? "";
+  console.error(e);
+  if (/schema cache|does not exist|PGRST205|42P01/i.test(msg + code))
+    return audience === "admin" ? "This app's database is not set up yet. Run the migrations in supabase/README.md."
+                                 : "We are finishing setup. Please try again shortly.";
+  if (/Failed to fetch|NetworkError|network/i.test(msg)) return "You seem to be offline. Check your connection and try again.";
+  if (/row-level security|permission denied|42501/i.test(msg + code)) return "You do not have access to that.";
+  if (/Invalid login/i.test(msg)) return "That email or password is wrong.";
+  return "Something went wrong. Please try again.";
+}
+```
+
 ## Migration: a public table with an owner (`create_orders`)
 ```sql
 create type public.order_status as enum ('pending','paid','confirmed','fulfilled','cancelled','failed');

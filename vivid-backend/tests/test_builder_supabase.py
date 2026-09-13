@@ -123,6 +123,31 @@ async def test_supabase_tools_need_a_backend_and_never_echo_secrets():
         "apply_migration", "deploy_edge_function", "set_secret"]
     assert len(tools.schemas_for(None)) == 6
 
+    # Database-only backend: migrations over Postgres, the rest withheld.
+    from app.builder import pgdirect
+    applied = []
+
+    async def apply(dsn, sql, name):
+        applied.append((dsn, sql, name))
+        if "boom" in sql:
+            raise pgdirect.DirectError('relation "x" already exists')
+    monkeypatch_apply = apply
+    import app.builder.pgdirect as pg
+    orig = pg.apply_migration
+    pg.apply_migration = monkeypatch_apply
+    try:
+        direct = tools.Backend(ref="refone", database_url="postgresql://u:p@h/db")
+        assert [s["function"]["name"] for s in tools.schemas_for(direct)][-1] == "apply_migration"
+        assert "deploy_edge_function" not in [s["function"]["name"] for s in tools.schemas_for(direct)]
+        out = await tools.execute("apply_migration", {"name": "create_x", "sql": "create table x(id int);"}, sb, direct)
+        assert out.text == "Migration create_x applied." and applied[0][2] == "create_x"
+        out = await tools.execute("apply_migration", {"name": "again", "sql": "boom"}, sb, direct)
+        assert out.text.startswith("error: migration again failed: relation")
+        out = await tools.execute("deploy_edge_function", {"name": "f", "code": "Deno.serve(()=>1)"}, sb, direct)
+        assert "needs the user's Supabase account connected" in out.text
+    finally:
+        pg.apply_migration = orig
+
     out = await tools.execute("apply_migration", {"name": "create_bookings",
                                                   "sql": "create table bookings(id int);"},
                               sb, backend)
@@ -155,6 +180,8 @@ def test_prompt_gets_the_backend_section_only_when_linked():
     text = system_prompt(None, "ctx", backend=True)
     assert "Backend: Supabase" in text and "row level security" in text
     assert "service key is only ever used inside edge functions" in text
+    assert "NOT available" not in text
+    assert "deploy_edge_function and set_secret are NOT available" in system_prompt(None, "ctx", backend=True, functions=False)
 
 
 async def test_backend_turn_carries_the_app_logic_skill_and_its_done_check(monkeypatch):

@@ -302,6 +302,8 @@ class Settings(BaseSettings):
     BUILDER_MAX_STEPS: int = 20
     # A first build writes a whole app and gets its own, larger cap.
     BUILDER_BUILD_MAX_STEPS: int = 40
+    # Once, when a first build reaches the cap while still typecheck-clean.
+    BUILDER_BUILD_EXTENSION_STEPS: int = 20
     # After a first build answers, one review compares the app with the spec
     # (pages, nav, seeded data, sections) and fills the gaps, with this many
     # extra steps. Runs before the visual critique.

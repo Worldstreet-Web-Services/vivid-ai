@@ -52,12 +52,18 @@ Local state is for the UI only; nothing that matters lives in localStorage.
 - Staff and admin are decided by `public.is_staff()` / `public.is_admin()` functions
   that read `profiles.role` (security definer, so policies stay short). Admin writes
   products, prices, stock, settings; staff moves orders and bookings along.
-- The first admin: the migration sets `role = 'admin'` for the owner's email from the
-  spec (if given); otherwise tell the user in the final reply how to make themselves
-  admin (sign up, then the app's Owner sign-in page explains it) and include a
-  `promote_first_admin` migration that upgrades the earliest profile when no admin exists.
-- Admin routes: `/admin` behind `RequireRole("admin" | "staff")`, redirecting others to
-  `/sign-in?from=/admin`. Not linked from the customer nav; at most "Owner sign in" in the footer.
+- The admin account exists before the user ever opens the app: a `seed_admin` migration
+  creates it (patterns file: `auth.users` + `auth.identities` with a bcrypt password, then
+  the profile's role set to admin). Email: the owner's email from the spec, else
+  `admin@<brand-slug>.app`. Password: generate one (12 characters, letters and digits),
+  put it in `supabase/README.md`, and say it in the final reply with "change it after
+  your first sign-in". Also keep `promote_first_admin` for a user who signs up themselves.
+- `/admin` is the owner's front door and the only owner route prefix. Signed out, `/admin`
+  renders the admin sign-in form (email, password, the brand mark, "Owner access"); signed
+  in as admin or staff it renders the dashboard; signed in as anyone else it says "This
+  account is not an admin" with a sign-out button. Sub-pages: `/admin/orders`,
+  `/admin/customers`, `/admin/riders` (or vendors, staff), `/admin/settings`. Not linked
+  from the customer nav; at most "Owner sign in" in the footer.
 - Anon (signed out) may read public tables and insert a guest order only if the spec allows
   guest checkout; otherwise checkout requires sign-in.
 
@@ -114,6 +120,13 @@ Local state is for the UI only; nothing that matters lives in localStorage.
   slots are generated from opening hours in the spec, skipping past times and taken slots.
 - Forms validate on the client (required, formats, minimums) and the database enforces
   the same with `check` constraints. Show the field error under the field.
+- Errors are never shown raw. One helper (`friendlyError(e)` in `src/lib/errors.ts`)
+  maps what Supabase returns to a sentence a customer understands: a missing table or
+  "schema cache" (the migrations have not run) becomes "This app's database is not set up
+  yet" for the owner and "We are finishing setup, please try again shortly" for a customer;
+  a network failure "You seem to be offline"; a policy rejection "You do not have access to
+  that"; anything else "Something went wrong. Please try again." Log the real error to the
+  console. Never render `error.message` from a query in the page.
 - Network: a failed read shows a retry button, not a blank page. Realtime
   (`supabase.channel(...).on("postgres_changes")`) for the admin orders table so a new
   order appears without refresh.

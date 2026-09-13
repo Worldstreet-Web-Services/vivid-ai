@@ -57,11 +57,21 @@ on a 390px screen, without zooming.
 - Consistency is what makes generated photos look like a real catalogue: use the same
   phrase for the setting in every product prompt ("on a light grey studio surface, side
   view, soft light") so the set matches; vary only the item.
+- People: the apps are for Nigeria. Every generated picture with a person shows Black
+  Africans, and the prompt says so ("a Black Nigerian dispatch rider in an orange jacket").
+  A hero with the wrong faces reads as a template; never ship one.
+- Platforms (delivery, logistics, fintech, marketplaces, SaaS) do not sell with stock-like
+  photos. Their hero shows the product: build a `ProductMockup` component that renders a
+  real, data-filled screen of the app (the dashboard, the order tracker, the rider view)
+  inside a device frame (rounded-2xl, ring-1, shadow-2xl, a slim top bar with three dots),
+  and use kind=illustration tiles or shape-and-gradient tiles for benefit cards. Photos of
+  people appear only as small, warm accents (a rider, a customer), never as the whole hero.
 - Logo: if the user uploaded one, use it in the header at h-8 (phones) to h-10, never
-  stretched. If not, make a mark with generate_image kind=logo (a single simple symbol
-  tied to the business, in the accent colour on the background colour, no text), show it
-  at h-8 to h-9 with rounded-lg, and set the brand name next to it in the heading font
-  (font-semibold tracking-tight). The mark gives the name a face; the type keeps it sharp.
+  stretched. If not, make a mark with generate_image kind=logo: one bold symbol tied to
+  the business in a vibrant two-colour gradient (the palette's primary and its bright
+  partner), app-icon quality, no text. Show it at h-9 with rounded-xl and the brand name
+  next to it in the heading font (font-semibold tracking-tight). A flat single-colour
+  square is not a logo; the mark must look like it came from a brand agency.
 
 ## Components and states
 - Use the shadcn components in src/components/ui. One primary button per view; the rest
@@ -74,9 +84,13 @@ on a 390px screen, without zooming.
 
 ## Roles: customers never see the owner's tools
 - A public site has two audiences. The customer nav and footer carry customer pages only.
-  Anything for the owner (admin, dashboard, stock, orders, bookings list) lives at its own
-  route (/admin) that is not linked from the customer nav; at most a small "Owner sign in"
-  link in the footer.
+  Anything for the owner (admin, dashboard, stock, orders, bookings list) lives at `/admin`,
+  not linked from the customer nav; at most a small "Owner sign in" link in the footer.
+  `/admin` itself is the owner's front door: signed out it shows the admin sign-in form,
+  signed in as owner it shows the dashboard; no other route for it.
+- The customer nav changes with the session: signed out it shows Sign in; signed in it shows
+  the account items (My orders, My bookings) and the name. Never show a signed-in-only page
+  to a visitor who is not signed in.
 - Without a backend, gate /admin with a sign-in screen that checks a PIN or password
   kept in the code, remember it in localStorage, and tell the user in the final reply that
   this keeps customers out but is not real security until a backend is linked.
