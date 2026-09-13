@@ -8,6 +8,7 @@ heading font renders sharp at every size, where an AI logo mark rarely
 survives inspection. The skill says so; this tool still allows one when a
 user asks for a mark.
 """
+import asyncio
 import logging
 from dataclasses import dataclass, field
 
@@ -80,10 +81,19 @@ class ImageMaker:
                                      meta={"stage": "image", "name": asset.name}))
             await db.commit()
             path, sb_path, meta = assets.public_path(asset), assets.sandbox_path(asset), asset.meta
-        try:
-            await self.sandbox.write_bytes(sb_path, data)
-        except SandboxError as e:
-            raise ImageError(f"the image was made but could not be written to the app: {e}")
+        # A megabyte into the sandbox times out now and then; the picture is
+        # already in storage, so a second try is cheap and usually enough.
+        last: SandboxError | None = None
+        for attempt in range(3):
+            try:
+                await self.sandbox.write_bytes(sb_path, data)
+                last = None
+                break
+            except SandboxError as e:
+                last = e
+                await asyncio.sleep(1.5 * (attempt + 1))
+        if last is not None:
+            raise ImageError(f"the image was made but could not be written to the app: {last}")
         self.made.append(path)
         return {"path": path, "bytes": len(data), "meta": meta or {}}
 
