@@ -210,4 +210,5 @@ def test_name_from_spec_and_brief():
     assert planning.name_from_spec("# Spec\nA thing", "## What it is\n**Kicks Lagos** is a sneaker shop") == "Kicks Lagos"
     assert planning.name_from_spec(None, "## What it is\nChopwell is a Lagos marketplace") == "Chopwell"
     assert planning.name_from_spec("no heading here") is None
+    assert planning.name_from_spec(None, "## What it is\nA wallet.\n## Pages and flows\nWelcome, Home") is None
     assert planning.auto_named("Untitled app") and planning.auto_named("") and not planning.auto_named("Mama Cass")

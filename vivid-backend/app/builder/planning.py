@@ -187,18 +187,21 @@ def name_from_spec(spec_md: str | None, brief_md: str | None = None) -> str | No
     """The app's name as the plan wrote it: the spec's H1 up to a dash or
     colon ("# Ọ̀nà Studio — online store" -> "Ọ̀nà Studio"), else the
     first bold or capitalised name in the brief's opening line."""
-    for text in (spec_md, brief_md):
+    for text, headings in ((spec_md, True), (brief_md, False)):
         if not text:
             continue
         for line in text.splitlines():
             line = line.strip()
-            if line.startswith("#"):
-                title = line.lstrip("#").strip()
-                if title.lower().startswith(("what it is", "who it is for", "spec")):
-                    continue
-                name = _TITLE_SPLIT.split(title, 1)[0].strip(" .,'\"")
-                if 2 <= len(name) <= 60:
-                    return name
+            if not headings or not line.startswith("#"):
+                continue
+            # The spec's title names the app; the brief's headings are
+            # section names ("Pages and flows"), never the brand.
+            title = line.lstrip("#").strip()
+            if title.lower().startswith(("what it is", "who it is for", "spec")):
+                continue
+            name = _TITLE_SPLIT.split(title, 1)[0].strip(" .,'\"")
+            if 2 <= len(name) <= 60:
+                return name
         m = re.search(r"\*\*([^*]{2,60})\*\*", text)
         if m:
             return m.group(1).strip()
