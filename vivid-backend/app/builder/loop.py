@@ -88,7 +88,8 @@ def _announces_more_work(text: str) -> bool:
 
 COMPLETION_BRIEF = """Before we show this to the user, review the app against the spec, page by \
 page. Check: every page in the spec's Pages section exists, is routed, and is linked from the \
-nav and footer; any admin or owner area is reachable; each list has at least eight realistic \
+nav and footer; any admin or owner area exists at its own route behind a sign-in gate and is NOT \
+linked from the customer nav (a footer "Owner sign in" link at most); each list has at least eight realistic \
 seeded items with names, prices in the spec's currency, short descriptions and an image \
 (generate_image for anything without an upload); each page has every section its recipe \
 lists; every image path used in the code exists in public/uploads (list_files it; generate \
