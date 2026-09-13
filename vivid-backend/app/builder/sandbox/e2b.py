@@ -111,8 +111,11 @@ class E2BSandbox(Sandbox):
         raise SandboxError(f"read failed: {last}") from last
 
     async def write_bytes(self, path: str, data: bytes) -> None:
+        # Generated images are a megabyte each; the SDK's default request
+        # timeout is tuned for small files and trips on a slow uplink.
         try:
-            await self._sb.files.write(self._anywhere(path), data)
+            await self._sb.files.write(self._anywhere(path), data,
+                                       request_timeout=settings.BUILDER_SANDBOX_WRITE_TIMEOUT)
         except (SandboxException, httpx.HTTPError) as e:
             raise SandboxError(f"write failed: {e}") from e
 

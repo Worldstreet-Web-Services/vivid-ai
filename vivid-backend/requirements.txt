@@ -18,3 +18,4 @@ pypdf==5.1.0
 num2words==0.5.14
 e2b==2.49.1
 blake3==1.0.9
+Pillow==11.1.0

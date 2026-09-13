@@ -119,9 +119,45 @@ async def test_supabase_tools_need_a_backend_and_never_echo_secrets():
     assert out.text.startswith("error: apply_migration needs a Supabase backend")
 
     backend = tools.Backend(ref="refone", token="tok")
-    assert [s["function"]["name"] for s in tools.schemas_for(backend)][-3:] == [
-        "apply_migration", "deploy_edge_function", "set_secret"]
+    assert [s["function"]["name"] for s in tools.schemas_for(backend)][-4:] == [
+        "apply_migration", "query_database", "deploy_edge_function", "set_secret"]
     assert len(tools.schemas_for(None)) == 6
+
+    # Database-only backend: migrations over Postgres, the rest withheld.
+    from app.builder import pgdirect
+    applied = []
+
+    async def apply(dsn, sql, name):
+        applied.append((dsn, sql, name))
+        if "boom" in sql:
+            raise pgdirect.DirectError('relation "x" already exists')
+    monkeypatch_apply = apply
+    import app.builder.pgdirect as pg
+    orig = pg.apply_migration
+    pg.apply_migration = monkeypatch_apply
+    try:
+        direct = tools.Backend(ref="refone", database_url="postgresql://u:p@h/db")
+        assert [s["function"]["name"] for s in tools.schemas_for(direct)][-2:] == ["apply_migration", "query_database"]
+
+        async def fake_query(dsn, sql, limit=51):
+            assert sql.startswith("select")
+            return [{"email": "admin@x.app", "confirmed": True}]
+        pg.query = fake_query
+        out = await tools.execute("query_database", {"sql": "select email from auth.users"}, sb, direct)
+        assert out.text == "email | confirmed\nadmin@x.app | True"
+        out = await tools.execute("query_database", {"sql": "delete from auth.users"}, sb, direct)
+        assert out.text.startswith("error: query_database takes one SELECT")
+        out = await tools.execute("query_database", {"sql": "select 1; drop table x"}, sb, direct)
+        assert out.text.startswith("error: query_database takes one SELECT")
+        assert "deploy_edge_function" not in [s["function"]["name"] for s in tools.schemas_for(direct)]
+        out = await tools.execute("apply_migration", {"name": "create_x", "sql": "create table x(id int);"}, sb, direct)
+        assert out.text == "Migration create_x applied." and applied[0][2] == "create_x"
+        out = await tools.execute("apply_migration", {"name": "again", "sql": "boom"}, sb, direct)
+        assert out.text.startswith("error: migration again failed: relation")
+        out = await tools.execute("deploy_edge_function", {"name": "f", "code": "Deno.serve(()=>1)"}, sb, direct)
+        assert "needs the user's Supabase account connected" in out.text
+    finally:
+        pg.apply_migration = orig
 
     out = await tools.execute("apply_migration", {"name": "create_bookings",
                                                   "sql": "create table bookings(id int);"},
@@ -149,10 +185,14 @@ async def test_supabase_tools_need_a_backend_and_never_echo_secrets():
 
 
 def test_prompt_gets_the_backend_section_only_when_linked():
-    assert "Backend: Supabase" not in system_prompt(None, "ctx")
+    assert "Backend" not in system_prompt(None, "ctx")
+    assert "no management access" in system_prompt(None, "ctx", backend_env=True)
+    assert "not linked yet" in system_prompt(None, "ctx", fullstack=True)
     text = system_prompt(None, "ctx", backend=True)
     assert "Backend: Supabase" in text and "row level security" in text
     assert "service key is only ever used inside edge functions" in text
+    assert "NOT available" not in text
+    assert "deploy_edge_function and set_secret are NOT available" in system_prompt(None, "ctx", backend=True, functions=False)
 
 
 async def test_backend_turn_carries_the_app_logic_skill_and_its_done_check(monkeypatch):
@@ -172,7 +212,7 @@ async def test_backend_turn_carries_the_app_logic_skill_and_its_done_check(monke
     sb = FakeSandbox({"src/App.tsx": "x"})
     backend = tools.Backend(ref="refone", token="t")
     runner = TurnRunner(sb, routing.BUILD, [], "a shop", spec_md="# Spec\nA shop",
-                        backend=backend)
+                        backend=backend, fullstack=True)
     await collect(runner)
     assert runner.result.reason == loop.ANSWERED and runner.result.completion_rounds == 1
     system = model.requests[0]["messages"][0]["content"]
@@ -182,13 +222,35 @@ async def test_backend_turn_carries_the_app_logic_skill_and_its_done_check(monke
     assert review.startswith("Before we show this") and "definition of done" in review
     assert "sign in as the owner" in review
 
-    # No backend: the same review without the full-stack check.
-    model = install(monkeypatch, [
+    # A backend alone is not a request for a full-stack app: a site with a
+    # linked Supabase gets the backend section but not the skill or check.
+    script = lambda: [
         ("Building.", [call("write_file", {"path": "src/A.tsx", "content": "export {}"})]),
         ("Done.", []), ("Reviewed.", []),
-    ])
+    ]
+    model = install(monkeypatch, script())
     runner = TurnRunner(FakeSandbox({"src/App.tsx": "x"}), routing.BUILD, [], "a shop",
-                        spec_md="# Spec\nA shop")
+                        spec_md="# Spec\nA shop", backend=backend)
     await collect(runner)
-    assert "## App logic skill" not in model.requests[0]["messages"][0]["content"]
+    system = model.requests[0]["messages"][0]["content"]
+    assert "## App logic skill" not in system and "Backend: Supabase" in system
+    assert "definition of done" not in model.requests[2]["messages"][-1]["content"]
+
+    # Keys pasted, no management token: the skill applies and the work is files.
+    model = install(monkeypatch, script())
+    runner = TurnRunner(FakeSandbox({"src/App.tsx": "x"}), routing.BUILD, [], "a shop",
+                        spec_md="# Spec\nA shop", fullstack=True, backend_env=True)
+    await collect(runner)
+    system = model.requests[0]["messages"][0]["content"]
+    assert "## App logic skill" in system and "no management access" in system
+    assert "supabase/migrations/" in system and "Backend: Supabase (linked" not in system
+    assert "definition of done" in model.requests[2]["messages"][-1]["content"]
+
+    # Full-stack asked but nothing linked: no tools, a note to connect Supabase.
+    model = install(monkeypatch, script())
+    runner = TurnRunner(FakeSandbox({"src/App.tsx": "x"}), routing.BUILD, [], "a shop",
+                        spec_md="# Spec\nA shop", fullstack=True)
+    await collect(runner)
+    system = model.requests[0]["messages"][0]["content"]
+    assert "Backend: not linked yet" in system and "## App logic skill" not in system
     assert "definition of done" not in model.requests[2]["messages"][-1]["content"]

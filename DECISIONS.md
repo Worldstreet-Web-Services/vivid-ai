@@ -448,3 +448,99 @@ solid full stack app... login signup... more complex logic".
   migration and function tools run for real, then one full-stack shop build
   from sign-up to a moved order. Paystack test keys make the verified
   payment path part of the same run.
+
+### Full-stack is opt-in (2026-09-13)
+
+The user: "Building full stack apps shouldn't be by default, unless
+requested." A linked Supabase is not a request. So a project carries
+`fullstack` (default false): the plan's `write_spec` sets it when the user
+asked for accounts, sign-in, per-user records or said full-stack (the plan
+prompt says what counts, and to ask when the idea sits on the line), and the
+client can toggle it with PATCH. The app-logic skill and its done check
+attach only when `fullstack` is true and a backend is linked; full-stack
+without a backend gets a prompt note (build with local state, ask the user
+to connect Supabase, never fake sign-in). Paystack test keys from the user
+verified live through the connector code the same day.
+
+### Live proof: SwiftDrop Logistics (2026-09-13)
+
+One prompt ("a full stack logistics app for Lagos...") through plan mode:
+the flag stayed false after the first message and flipped to true at
+write_spec. Build with Paystack (test keys, connector verified live) and a
+keys-only Supabase link: 71 files, every page in the spec (public site,
+tracking by code, sender booking with Paystack checkout, rider dashboard
+and profile, owner deliveries/riders/revenue, owner and rider sign-in
+pages), eight migrations with RLS per role and transitions as SQL
+functions (accept_delivery, advance_delivery, assign_rider,
+confirm_payment...), two edge functions, a README telling the owner what
+to run. Published at https://swiftdrop-logistics-97875f.vivid-apps.pages.dev.
+
+Cost of the run: the primary used all 40 steps and handed to the fallback
+(step_limit), which re-read the project before finishing; the critique
+fixes then left a half-finished edit and the turn ended on typecheck
+strikes; one follow-up edit turn (24 steps, 7 minutes) fixed it and
+published. Total about 55 minutes. Findings for the speed list: extend the
+budget of a first build that is still writing clean files instead of
+swapping models; end a turn on a clean typecheck, never mid-edit (the
+critique round should not start an edit it cannot finish); parallel image
+generation; show the preview during the turn.
+
+## 15. Premium platforms, dynamic recipes, direct database (2026-09-13)
+
+The user's review of SwiftDrop: "the frontend wasn't nice, not premium",
+raw Supabase errors on screen, faces in generated photos not African, and
+a reference (Tango Fuel App: light, navy + lime, product mockups in the
+hero, illustration tiles, dark CTA band, rich footer). Also: the recipe
+keyword table "should be dynamic". Changes:
+
+- Recipes are read from `skills/design/references/recipes/*.md`; the plan
+  model picks one by name in `write_spec.recipe` (enum built per turn from
+  the folder); `project.recipe` stores it; a project that skipped plan mode
+  gets one from a single short model call (`skills.pick_recipe`) stored on
+  first build. The keyword table is gone. Adding a recipe = adding a file.
+- New `platform` recipe (Tango-shaped: eyebrow pills, three-line headline,
+  ProductMockup component with real seeded data in a device frame, six
+  benefit tiles, feature rows, dark CTA band, role section, footer in the
+  primary), palettes `navy-lime`, `navy-orange`, `green-cream` with the
+  two-tone rule, and imagery rules: every person is Black African (also
+  baked into the image styles), platforms show the product not stock
+  photos, logos are gradient app-icon marks.
+- Roles: `/admin` is the owner's front door (sign-in form when signed out,
+  dashboard when signed in); the customer nav follows the session.
+- Fullstack skill: the admin account is created by a `seed_admin` migration
+  (auth.users + identities with a bcrypt password), credentials in the
+  README and the final reply; `friendlyError` maps Supabase errors to
+  sentences, "database not set up yet" included; never render
+  `error.message`.
+- Direct database link: `POST .../supabase` accepts `database_url` (the
+  dashboard's connection string). `app/builder/pgdirect.py` verifies it and
+  applies migrations in a transaction, recording them in
+  `supabase_migrations.schema_migrations`; `Backend` carries either a
+  management token or a DSN; the function and secret tools are withheld
+  without a token and the prompt says to write them as files. This is what
+  makes /admin work for real without a PAT or OAuth app.
+- Loop: a first build at its step cap with a clean typecheck gets one
+  extension (`BUILDER_BUILD_EXTENSION_STEPS`, 20) before the model swap;
+  the completeness review starts with a fresh strike count.
+
+### Live proof: Chopwell (2026-09-13)
+
+One prompt, plan mode chose `platform` and full-stack. Direct database link
+(pooler host aws-1-eu-west-1) so the builder applied 11 migrations itself,
+including the seeded admin, 12 restaurants, menus, riders, customers and
+118 orders. 16 pictures in three concurrent batches, zero write failures
+after the retry and the longer timeout. The primary used 60 steps (40 plus
+the extension) and wrote every page before the handover; the fallback then
+looped on diagnostic "migrations" trying to debug admin sign-in, which was
+the NULL-token-columns quirk of rows inserted into auth.users. Fixes:
+`query_database` (read-only SELECT tool) and the seed pattern sets the
+token columns to ''. One repair turn (7 steps, 3 min) fixed all seeded
+accounts, dropped the diagnostic tables and tested sign-in for all four
+roles. Publish then failed at 32 MB against a 25 MB self-imposed cap;
+raised to 120 MB (Cloudflare caps a file, not a site). Live at
+https://chopwell-24ad14.vivid-apps.pages.dev, owner at /admin.
+
+Next on the list from this run: re-encode generated pictures as JPEG or
+WebP at write time (needs Pillow), a clearer cap message so the model stops
+asking for pictures, and the fallback should inherit the primary's
+tool-result history instead of re-reading.

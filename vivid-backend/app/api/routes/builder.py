@@ -46,7 +46,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
-from app.builder import (assets, blob, images, planning, publish, routing, secrets,
+from app.builder import (assets, blob, images, pgdirect, planning, publish, routing, secrets, skills,
                          snapshots, stream, supabase, tools, usage)
 from app.builder.loop import ModelCall, TurnRunner, turns
 from app.builder.planning import PlanRunner
@@ -121,6 +121,10 @@ async def update_project(project_id: str, body: ProjectUpdate,
         project.name = body.name.strip() or project.name
     if body.spec_md is not None:
         project.spec_md = body.spec_md
+    if body.fullstack is not None:
+        project.fullstack = body.fullstack
+    if body.recipe is not None:
+        project.recipe = body.recipe.strip().lower() or None
     await db.commit()
     return project
 
@@ -206,6 +210,11 @@ async def chat(project_id: str, body: ChatIn, request: Request,
 
     spec_md, recent = project.spec_md, _recent(project)
     payments = project.payments_provider if project.payments_provider != "none" else None
+    maps = project.maps_provider if project.maps_provider != "none" else None
+    if not planning_mode and project.recipe is None and (spec_md or project.brief_md):
+        # A project that skipped plan mode still gets a recipe, chosen once.
+        project.recipe = await skills.pick_recipe(spec_md or project.brief_md or "")
+        await db.commit()
     backend = None if planning_mode else await _backend_for(project, user, db)
     env_vars = None if planning_mode else await _env_for(project, db)
     uploaded = await assets.list_for(db, project_id)
@@ -242,7 +251,9 @@ async def chat(project_id: str, body: ChatIn, request: Request,
                 return
             runner = TurnRunner(sandbox, stage, history, body.text, spec_md, recent,
                                 cancelled=cancel.is_set, backend=backend,
-                                assets_block=assets_block, payments=payments,
+                                assets_block=assets_block, payments=payments, maps=maps,
+                                fullstack=project.fullstack, recipe=project.recipe,
+                                backend_env=bool(env_vars and "VITE_SUPABASE_URL" in env_vars),
                                 keepalive=lambda: manager.touch(project_id),
                                 project_id=project_id,
                                 images=(images.ImageMaker(
@@ -322,6 +333,8 @@ async def _persist_plan_turn(project_id: str, collector: stream.PartsCollector,
                                   parts=collector.parts, model=runner.result.model))
             if runner.result.spec_md:
                 project.spec_md = runner.result.spec_md
+                project.fullstack = runner.result.fullstack
+                project.recipe = runner.result.recipe
             if runner.result.brief_md:
                 project.brief_md = runner.result.brief_md
             await usage.record_model(db, project_id, [
@@ -373,6 +386,10 @@ async def _env_for(project: BuilderProject, db: AsyncSession) -> dict[str, str] 
         public = await secrets.get_secret(db, project.id, "PAYSTACK_PUBLIC_KEY")
         if public:
             env["VITE_PAYSTACK_PUBLIC_KEY"] = public
+    if project.maps_provider == "google":
+        key = await secrets.get_secret(db, project.id, "GOOGLE_MAPS_KEY")
+        if key:
+            env["VITE_GOOGLE_MAPS_KEY"] = key
     return env or None
 
 
@@ -391,6 +408,11 @@ async def _backend_for(project: BuilderProject, user: User,
         return None
     connector = await _supabase_connector(user.id, db)
     if connector is None:
+        # No account link: a pasted connection string still gives the
+        # migration tool (SQL over Postgres); functions and secrets stay off.
+        dsn = await secrets.get_secret(db, project.id, "SUPABASE_DATABASE_URL")
+        if dsn:
+            return tools.Backend(ref=project.supabase_project_ref, database_url=dsn)
         return None
     try:
         token = await supabase_connector.access_token(db, connector)
@@ -434,6 +456,12 @@ async def link_supabase(project_id: str, body: SupabaseLinkIn, request: Request,
                            "Connect Supabase first, or pass url and anon_key.")
         url = body.url or f"https://{body.project_ref}.supabase.co"
         anon = body.anon_key
+    if body.database_url:
+        try:
+            await pgdirect.verify(body.database_url)
+        except pgdirect.DirectError as e:
+            raise APIError(400, "bad_request", f"Could not connect to the database: {e}")
+        await secrets.set_secret(db, project_id, "SUPABASE_DATABASE_URL", body.database_url)
     await secrets.set_secret(db, project_id, "SUPABASE_URL", url)
     await secrets.set_secret(db, project_id, "SUPABASE_ANON_KEY", anon)
     project.backend_mode = "byo"
@@ -471,7 +499,9 @@ async def enable_payments(project_id: str, user: User = Depends(get_current_user
     project.payments_provider = "paystack"
     await db.commit()
     backend = await _backend_for(project, user, db)
-    if backend is not None:
+    if backend is not None and backend.can_functions:
+        # Only a management token can set function secrets; a database-only
+        # link leaves the secret to the README the build writes.
         try:
             await backend.api.set_secrets(
                 backend.ref, {"PAYSTACK_SECRET_KEY": connector_tokens.read(connector.token)})
@@ -489,6 +519,44 @@ async def disable_payments(project_id: str, user: User = Depends(get_current_use
     project = await _owned(project_id, user, db)
     project.payments_provider = "none"
     await secrets.delete_secret(db, project_id, "PAYSTACK_PUBLIC_KEY")
+    await db.commit()
+    return project
+
+
+# ------------------------------------------------------------------ maps
+async def _maps_connector(user_id: str, db: AsyncSession) -> Connector | None:
+    return (await db.execute(
+        select(Connector).where(Connector.user_id == user_id,
+                                Connector.provider == "google_maps"))).scalar_one_or_none()
+
+
+@router.post("/projects/{project_id}/maps", response_model=ProjectOut)
+async def enable_maps(project_id: str, user: User = Depends(get_current_user),
+                      db: AsyncSession = Depends(get_db)):
+    """Address autocomplete, maps and distance with the user's Google Maps
+    key. It is a browser key, so it goes into the app's .env."""
+    project = await _owned(project_id, user, db)
+    if not secrets.configured():
+        raise APIError(503, "not_configured", "Secrets storage is not configured.")
+    connector = await _maps_connector(user.id, db)
+    if connector is None:
+        raise APIError(400, "bad_request", "Connect a Google Maps key first.")
+    await secrets.set_secret(db, project_id, "GOOGLE_MAPS_KEY",
+                             connector_tokens.read(connector.token))
+    project.maps_provider = "google"
+    await db.commit()
+    sandbox = manager.peek(project_id)
+    if sandbox is not None:
+        await _sync_env(sandbox, await _env_for(project, db))
+    return project
+
+
+@router.delete("/projects/{project_id}/maps", response_model=ProjectOut)
+async def disable_maps(project_id: str, user: User = Depends(get_current_user),
+                       db: AsyncSession = Depends(get_db)):
+    project = await _owned(project_id, user, db)
+    project.maps_provider = "none"
+    await secrets.delete_secret(db, project_id, "GOOGLE_MAPS_KEY")
     await db.commit()
     return project
 

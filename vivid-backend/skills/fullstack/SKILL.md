@@ -21,6 +21,9 @@ Local state is for the UI only; nothing that matters lives in localStorage.
   reset-password. `src/pages/admin/`: the owner's screens. `src/pages/`: the customer's.
 - Migrations through `apply_migration`, one per change, named for what they do
   (`create_profiles`, `create_orders`, `orders_policies`). Never one giant migration.
+  When the tools are not available this turn, the same migrations are files under
+  `supabase/migrations/` and functions under `supabase/functions/`, as the backend
+  section says; the app is written the same either way.
 
 ## Accounts
 - Supabase auth only: email and password by default; phone OTP (`signInWithOtp` with
@@ -35,6 +38,23 @@ Local state is for the UI only; nothing that matters lives in localStorage.
   to where they were going (`state.from`), else to the home page. Sign-in has a
   "Forgot password?" link; reset uses `resetPasswordForEmail` with
   `redirectTo: window.location.origin + "/reset-password"`.
+- Other roles join by self sign-up with approval, never by hand in a dashboard: a
+  "Ride with us" / "List your kitchen" / "Join as staff" form takes the role's details
+  (name, phone, email, password, plus the role's fields: bike plate and areas, or the
+  business name and address) and creates the account with that role and
+  `status = 'pending'`. Pending accounts can sign in and see one screen: "Your application
+  is being reviewed", with what happens next and a contact line. `/admin` lists pending
+  applications first with Approve and Reject buttons; approval is an update the policies
+  allow only for admin, so no server code is needed. Approved accounts land on their
+  dashboard; rejected ones see why. The owner may also change status later (suspend).
+- `AuthProvider.loading` must resolve: it is false as soon as `getSession` returns, and
+  the profile loads separately (`profile` may be null for a moment). A failed or missing
+  profile row never leaves the app on a spinner: show the page, and treat a missing
+  profile as role customer with a one-line "finish your profile" notice. Guard against
+  the sign-up trigger racing the first profile read by retrying that read once after 800 ms.
+- Phone numbers: accept `0803 123 4567`, `08031234567`, `+234 803 123 4567` and
+  `+2348031234567`; normalise to `+234...` before saving, and the validation message shows
+  both accepted forms.
 - Guests can browse; sign-in is asked for at the moment it is needed (checkout, booking,
   saving), with the reason in one line ("Sign in so you can track this order").
 - Every auth error is shown in words a customer understands ("That password is wrong"),
@@ -49,12 +69,18 @@ Local state is for the UI only; nothing that matters lives in localStorage.
 - Staff and admin are decided by `public.is_staff()` / `public.is_admin()` functions
   that read `profiles.role` (security definer, so policies stay short). Admin writes
   products, prices, stock, settings; staff moves orders and bookings along.
-- The first admin: the migration sets `role = 'admin'` for the owner's email from the
-  spec (if given); otherwise tell the user in the final reply how to make themselves
-  admin (sign up, then the app's Owner sign-in page explains it) and include a
-  `promote_first_admin` migration that upgrades the earliest profile when no admin exists.
-- Admin routes: `/admin` behind `RequireRole("admin" | "staff")`, redirecting others to
-  `/sign-in?from=/admin`. Not linked from the customer nav; at most "Owner sign in" in the footer.
+- The admin account exists before the user ever opens the app: a `seed_admin` migration
+  creates it (patterns file: `auth.users` + `auth.identities` with a bcrypt password, then
+  the profile's role set to admin). Email: the owner's email from the spec, else
+  `admin@<brand-slug>.app`. Password: generate one (12 characters, letters and digits),
+  put it in `supabase/README.md`, and say it in the final reply with "change it after
+  your first sign-in". Also keep `promote_first_admin` for a user who signs up themselves.
+- `/admin` is the owner's front door and the only owner route prefix. Signed out, `/admin`
+  renders the admin sign-in form (email, password, the brand mark, "Owner access"); signed
+  in as admin or staff it renders the dashboard; signed in as anyone else it says "This
+  account is not an admin" with a sign-out button. Sub-pages: `/admin/orders`,
+  `/admin/customers`, `/admin/riders` (or vendors, staff), `/admin/settings`. Not linked
+  from the customer nav; at most "Owner sign in" in the footer.
 - Anon (signed out) may read public tables and insert a guest order only if the spec allows
   guest checkout; otherwise checkout requires sign-in.
 
@@ -67,7 +93,11 @@ Local state is for the UI only; nothing that matters lives in localStorage.
   `naira()`. Phone numbers as text, formatted with `phone()`.
 - Seed data lives in a migration (`seed_products`), with the same minimums as the design
   recipe (8 to 12 products or services with real names, prices, descriptions and images
-  from public/uploads). The app never seeds on the client.
+  from public/uploads). The app never seeds on the client. Every image path in a seed
+  must be a file that exists: `list_files public/uploads` first and reuse pictures across
+  rows when the picture budget is spent; a row pointing at a picture that was never made
+  is a broken card on every screen. Any `<img>` bound to data has an `onError` fallback
+  (a tinted tile with the item's initial), so a missing file can never show alt text.
 - Reads go through `db.ts` with the row types; lists are paginated (`range(from, to)`,
   page size 24) with a "Load more" button, searched with `ilike`, sorted deliberately.
 - Every list screen has loading, empty and error states; every write shows a pending
@@ -109,8 +139,22 @@ Local state is for the UI only; nothing that matters lives in localStorage.
 ## Real-world edges
 - Time: store `timestamptz`, display in Africa/Lagos with `Intl.DateTimeFormat`. Booking
   slots are generated from opening hours in the spec, skipping past times and taken slots.
+- Checkout and booking forms are pre-filled from the signed-in profile (name, phone,
+  email) and the last used address; the user edits, never retypes. Saved addresses are a
+  table with a `label` and a "use this" choice at checkout.
+- Every list screen fetches inside `useEffect` with a cancelled flag, sets `loading`
+  false in a `finally`, and shows the friendly error with a retry when the read fails; a
+  page must never spin forever because a query threw, returned nothing, or a filter
+  excluded every row (that is the empty state, not loading).
 - Forms validate on the client (required, formats, minimums) and the database enforces
   the same with `check` constraints. Show the field error under the field.
+- Errors are never shown raw. One helper (`friendlyError(e)` in `src/lib/errors.ts`)
+  maps what Supabase returns to a sentence a customer understands: a missing table or
+  "schema cache" (the migrations have not run) becomes "This app's database is not set up
+  yet" for the owner and "We are finishing setup, please try again shortly" for a customer;
+  a network failure "You seem to be offline"; a policy rejection "You do not have access to
+  that"; anything else "Something went wrong. Please try again." Log the real error to the
+  console. Never render `error.message` from a query in the page.
 - Network: a failed read shows a retry button, not a blank page. Realtime
   (`supabase.channel(...).on("postgres_changes")`) for the admin orders table so a new
   order appears without refresh.
@@ -120,11 +164,14 @@ Local state is for the UI only; nothing that matters lives in localStorage.
 1. Sign up, sign in, sign out, reset password all work, and the session survives reload.
 2. A new customer can do the main thing (order, book, post) end to end and see it in
    their account afterwards.
-3. The owner signs in at the Owner sign-in page, lands in `/admin`, sees that order or
+3. A rider (or partner) can apply through the site, sees the "being reviewed" screen,
+   and the owner approves them from `/admin`; after approval they reach their dashboard.
+4. Sign out works from the header on desktop and phone; the auth spinner never sticks.
+5. The owner signs in at the Owner sign-in page, lands in `/admin`, sees that order or
    booking, and moves it to the next state; the customer's page reflects it.
-4. Signed-out visitors and customers cannot read or change what is not theirs: every
+6. Signed-out visitors and customers cannot read or change what is not theirs: every
    table has RLS with policies, and admin writes fail for a customer (the policies, not
    the UI, stop them).
-5. No `any`, no `service_role` key anywhere in src/, no secret in .env or code.
-6. The final reply tells the user, in plain words, how to sign in as owner and, when a
+7. No `any`, no `service_role` key anywhere in src/, no secret in .env or code.
+8. The final reply tells the user, in plain words, how to sign in as owner and, when a
    webhook or secret is involved, exactly what to add in the third party's dashboard.

@@ -79,6 +79,12 @@ SUPABASE_SCHEMAS: list[dict] = [
         {"name": {"type": "string", "description": "e.g. create_bookings"},
          "sql": {"type": "string", "description": "The SQL to run."}},
         ["name", "sql"]),
+    _fn("query_database",
+        "Run one read-only SQL query (select only) against the project's database "
+        "and see up to 50 rows. For checking data, schema or an account; never "
+        "for changes, which go through apply_migration.",
+        {"sql": {"type": "string", "description": "A single SELECT."}},
+        ["sql"]),
     _fn("deploy_edge_function",
         "Deploy a Supabase Edge Function (Deno, TypeScript) under the given "
         "name; the code is index.ts and must export a Deno.serve handler. "
@@ -128,14 +134,26 @@ _MIGRATION_NAME = re.compile(r"^[a-z][a-z0-9_]{1,62}$")
 
 @dataclass
 class Backend:
-    """The Supabase project a turn may act on: its ref and a live
-    Management API token. Built by the route, never by the model."""
+    """The Supabase project a turn may act on. With a Management API token
+    every tool works; with only a database connection string, migrations
+    run over Postgres and the function and secret tools are withheld.
+    Built by the route, never by the model."""
     ref: str
-    token: str
+    token: str | None = None
+    database_url: str | None = None
+
+    @property
+    def can_functions(self) -> bool:
+        return bool(self.token)
 
     @property
     def api(self) -> Management:
+        if not self.token:
+            raise RuntimeError("no management token for this backend")
         return Management(self.token)
+
+
+FUNCTION_TOOLS = {"deploy_edge_function", "set_secret"}
 
 
 def schemas_for(backend: "Backend | None", images: "ImageMaker | None" = None) -> list[dict]:
@@ -143,7 +161,8 @@ def schemas_for(backend: "Backend | None", images: "ImageMaker | None" = None) -
     if images is not None:
         out += IMAGE_SCHEMAS
     if backend is not None:
-        out += SUPABASE_SCHEMAS
+        out += [s for s in SUPABASE_SCHEMAS
+                if backend.can_functions or s["function"]["name"] not in FUNCTION_TOOLS]
     return out
 
 #: Commands the model may not run, whatever it says it is doing. Matched
@@ -208,6 +227,10 @@ async def execute(name: str, args: dict, sandbox: Sandbox,
     if name in SUPABASE_NAMES:
         if backend is None:
             return Outcome(f"error: {name} needs a Supabase backend linked to this project.")
+        if name in FUNCTION_TOOLS and not backend.can_functions:
+            return Outcome(f"error: {name} needs the user's Supabase account connected; write "
+                           "the function as a file under supabase/functions/ instead and "
+                           "tell the user to deploy it.")
         try:
             outcome = await _SUPABASE_HANDLERS[name](args, backend)
         except SupabaseError as e:
@@ -257,8 +280,46 @@ async def _apply_migration(args: dict, backend: Backend) -> Outcome:
         return Outcome("error: sql is required")
     if not _MIGRATION_NAME.match(name):
         return Outcome("error: name must be short snake_case, e.g. create_bookings")
-    await backend.api.apply_migration(backend.ref, sql, name)
+    if backend.token:
+        await backend.api.apply_migration(backend.ref, sql, name)
+    else:
+        from app.builder import pgdirect
+        try:
+            await pgdirect.apply_migration(backend.database_url, sql, name)
+        except pgdirect.DirectError as e:
+            return Outcome(f"error: migration {name} failed: {e}")
     return Outcome(f"Migration {name} applied.")
+
+
+_SELECT = re.compile(r"^\s*(with\b[\s\S]*?\bselect\b|select\b)", re.I)
+_UNSAFE = re.compile(r"\b(insert|update|delete|drop|alter|create|truncate|grant|revoke)\b", re.I)
+
+
+def _rows_text(rows: list[dict]) -> str:
+    if not rows:
+        return "No rows."
+    cols = list(rows[0].keys())
+    lines = [" | ".join(cols)]
+    for r in rows[:50]:
+        lines.append(" | ".join(str(r.get(c)) for c in cols))
+    more = f"\n... {len(rows) - 50} more rows" if len(rows) > 50 else ""
+    return "\n".join(lines) + more
+
+
+async def _query_database(args: dict, backend: Backend) -> Outcome:
+    sql = str(args.get("sql") or "").strip().rstrip(";")
+    if not sql or not _SELECT.match(sql) or _UNSAFE.search(sql) or ";" in sql:
+        return Outcome("error: query_database takes one SELECT; changes go through apply_migration")
+    try:
+        if backend.token:
+            rows = await backend.api.query(backend.ref, sql, read_only=True) or []
+        else:
+            from app.builder import pgdirect
+            rows = await pgdirect.query(backend.database_url, sql)
+    except Exception as e:                                     # the text is for the model
+        from app.builder import pgdirect
+        return Outcome(f"error: query failed: {pgdirect.clean_error(e)}")
+    return Outcome(truncate(_rows_text(list(rows))))
 
 
 async def _deploy_edge_function(args: dict, backend: Backend) -> Outcome:
@@ -289,6 +350,7 @@ async def _set_secret(args: dict, backend: Backend) -> Outcome:
 
 _SUPABASE_HANDLERS = {
     "apply_migration": _apply_migration,
+    "query_database": _query_database,
     "deploy_edge_function": _deploy_edge_function,
     "set_secret": _set_secret,
 }

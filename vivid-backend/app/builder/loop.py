@@ -92,8 +92,9 @@ nav and footer; any admin or owner area exists at its own route behind a sign-in
 linked from the customer nav (a footer "Owner sign in" link at most); each list has at least eight realistic \
 seeded items with names, prices in the spec's currency, short descriptions and an image \
 (generate_image for anything without an upload); each page has every section its recipe \
-lists; every image path used in the code exists in public/uploads (list_files it; generate \
-or fix any that do not, a broken image is worse than none); forms work end to end (add to \
+lists; every image path used in the code AND in seeded database rows (query the tables that hold \
+image columns) exists in public/uploads (list_files it; generate or repoint any that do \
+not, a broken image is worse than none); forms work end to end (add to \
 cart, book, save); the footer has the real business details; the copy passes the copy \
 skill's checks. list_files and read what you need, then build everything that is missing or thin \
 now, in this turn. Do not shorten anything. When it is complete, reply to the user in one or \
@@ -104,10 +105,12 @@ FULLSTACK_BRIEF = """ This project has a Supabase backend, so also check the app
 definition of done: sign-up, sign-in, sign-out and password reset exist and the session \
 survives a reload; a new customer can do the main thing end to end and see it in their \
 account; the owner signs in, lands in /admin and can move an order or booking to its next \
-state through the transition function; every table has row level security with policies \
+state through the transition function; other roles named in the spec can apply through the \
+site and be approved from /admin; sign out is in the header on desktop and phone and the auth \
+spinner never sticks; every table has row level security with policies \
 per role; nothing that matters is kept in localStorage; no service key or secret in src/ or \
-.env. Build what is missing with apply_migration and the files, then tell the user how to \
-sign in as the owner."""
+.env. Build what is missing with apply_migration (or the migration files when the tools are \
+not available) and the app files, then tell the user how to sign in as the owner."""
 #: Seconds before restarting a broken stream, multiplied by the attempt.
 _RETRY_BACKOFF = 1.5
 
@@ -177,9 +180,23 @@ class TurnRunner:
                  project_id: str = "",
                  critique: bool | None = None,
                  images=None,
-                 payments: str | None = None) -> None:
+                 payments: str | None = None,
+                 fullstack: bool = False,
+                 backend_env: bool = False,
+                 recipe: str | None = None,
+                 maps: str | None = None) -> None:
         self.sandbox = sandbox
         self.backend = backend
+        #: The app has a Supabase client (keys pasted) but this turn has no
+        #: management tools: migrations and functions are written as files.
+        self.backend_env = backend_env
+        #: The design recipe the plan chose for this project.
+        self.recipe = recipe
+        #: "google" when the project has a Maps key; adds the maps skill.
+        self.maps = maps
+        #: The user asked for accounts and server-side data (plan or client
+        #: set it). Adds the app-logic skill when a backend is linked.
+        self.fullstack = fullstack
         #: "paystack" when the project takes payments; adds the skill.
         self.payments = payments
         #: An ImageMaker when the image model is configured; the model may
@@ -242,6 +259,13 @@ class TurnRunner:
         })
         yield stream.finish()
 
+    @property
+    def _app_logic(self) -> bool:
+        """The app-logic skill and its done check apply only to a project
+        the user asked to be full-stack, and only once a backend is linked
+        so the migration and function tools exist."""
+        return self.fullstack and (self.backend is not None or self.backend_env)
+
     # ------------------------------------------------------------ attempt
     async def _attempt(self, endpoint: provider.Endpoint, stage: str) -> AsyncIterator[dict]:
         """One model's try at the turn. Sets self.result.reason on exit."""
@@ -253,7 +277,10 @@ class TurnRunner:
                          assets_block=self.assets_block,
                          skill_block=skills.ui_block(self.spec_md, self.user_text,
                                                     payments=self.payments,
-                                                    backend=self.backend is not None))}]
+                                                    backend=self._app_logic,
+                                                    recipe=self.recipe, maps=self.maps),
+                         fullstack=self.fullstack, backend_env=self.backend_env,
+                         functions=self.backend is None or self.backend.can_functions)}]
         messages += self.history
         messages.append({"role": "user", "content": self.user_text})
 
@@ -269,9 +296,18 @@ class TurnRunner:
         critique_always = first_build or _about_looks(self.user_text)
         nudges_left = 2
         review_deadline = None
+        extended = False
         step = 0
         while True:
             step += 1
+            if step > budget and first_build and not extended and strikes == 0 \
+                    and review_deadline is None and not self.result.completion_rounds \
+                    and not self.result.critique_rounds:
+                # Still writing clean files at the cap: more steps for this
+                # model beat a handover that re-reads everything.
+                extended = True
+                budget += settings.BUILDER_BUILD_EXTENSION_STEPS
+                yield stream.data("status", {"text": "Still building, a few more steps"})
             if step > budget:
                 if (review_deadline is not None and step > review_deadline
                         and critique_left > 0 and self.result.touched):
@@ -331,10 +367,11 @@ class TurnRunner:
                     yield stream.data("status", {"text": "Checking the app against the spec"})
                     yield stream.data("review", {"kind": "completeness",
                                                  "round": self.result.completion_rounds})
-                    brief = COMPLETION_BRIEF + (FULLSTACK_BRIEF if self.backend is not None else "")
+                    brief = COMPLETION_BRIEF + (FULLSTACK_BRIEF if self._app_logic else "")
                     messages.append({"role": "user", "content": brief})
                     budget = step + settings.BUILDER_COMPLETION_STEPS
                     review_deadline = budget
+                    strikes = 0                          # a new phase, a fresh count
                     if self.keepalive is not None:
                         await self.keepalive()
                     continue
@@ -376,6 +413,18 @@ class TurnRunner:
             held: list[tuple[dict, tools.Outcome]] = []
             results: dict[str, str] = {}
             wrote_kind = None
+            # Pictures take a minute each and do not touch the code: a step
+            # that asks for several gets them all at once.
+            pre: dict[str, tools.Outcome] = {}
+            image_calls = [c for c in calls if c["name"] == "generate_image" and not c.get("error")]
+            if len(image_calls) > 1:
+                yield stream.data("status", {"text": f"Making {len(image_calls)} pictures"})
+                outs = await asyncio.gather(*(
+                    tools.execute(c["name"], c["arguments"], self.sandbox, self.backend,
+                                  self.images, typecheck_now=False) for c in image_calls))
+                pre = {c["id"]: o for c, o in zip(image_calls, outs)}
+                if self.keepalive is not None:
+                    await self.keepalive()
             for call in calls:
                 if self.cancelled():
                     yield stream.abort("cancelled by the user")
@@ -391,9 +440,9 @@ class TurnRunner:
                     yield stream.tool_error(call["id"], content)
                     results[call["id"]] = content
                     continue
-                outcome = await tools.execute(call["name"], call["arguments"],
-                                              self.sandbox, self.backend, self.images,
-                                              typecheck_now=False)
+                outcome = pre.get(call["id"]) or await tools.execute(
+                    call["name"], call["arguments"], self.sandbox, self.backend, self.images,
+                    typecheck_now=False)
                 if outcome.touched and outcome.touched not in self.result.touched:
                     self.result.touched.append(outcome.touched)
                 if outcome.touched:
@@ -442,6 +491,7 @@ _TOOL_STATUS = {
     "write_file": "Writing the app", "edit_file": "Making the change",
     "run_command": "Installing and running", "get_dev_server_logs": "Checking the dev server",
     "generate_image": "Making pictures", "apply_migration": "Updating the database",
+    "query_database": "Checking the database",
     "deploy_edge_function": "Deploying server code", "set_secret": "Storing a secret",
 }
 

@@ -265,3 +265,46 @@ async def test_raw_ssl_error_mid_stream_is_retried(monkeypatch):
     with pytest.raises(adapter.CodeLLMUnavailable):
         async for _ in adapter.stream_chat([{"role": "user", "content": "hi"}], [], endpoint=ep):
             pass
+
+
+async def test_first_build_extends_once_while_clean_then_falls_back(monkeypatch):
+    """A first build at its cap with a clean typecheck gets one extension
+    with the same model; a second cap hands over as before."""
+    monkeypatch.setattr(settings, "BUILDER_BUILD_MAX_STEPS", 2)
+    monkeypatch.setattr(settings, "BUILDER_BUILD_EXTENSION_STEPS", 2)
+    monkeypatch.setattr(settings, "BUILDER_COMPLETION_ROUNDS", 0)
+    monkeypatch.setattr(settings, "BUILDER_CRITIQUE_ROUNDS", 0)
+    forever = [("", [call("write_file", {"path": f"src/F{i}.tsx", "content": "export {}"}, f"c{i}")])
+               for i in range(12)]
+    model = install(monkeypatch, forever)
+    sb = FakeSandbox({"src/App.tsx": "x"})
+    runner = TurnRunner(sb, routing.BUILD, [], "build it all", spec_md="# Spec\nBig")
+    parts, c = await collect(runner)
+    models_used = [r["model"] for r in model.requests]
+    assert models_used[:4] == ["vendor/primary"] * 4          # 2 + the extension of 2
+    assert models_used[4:] == ["vendor/fallback"] * 4
+    statuses = [p["data"]["text"] for p in parts if p["type"] == "data-status"]
+    assert statuses.count("Still building, a few more steps") == 2   # once per attempt
+    assert runner.result.reason == loop.STEP_LIMIT
+
+
+async def test_no_extension_for_edits_or_after_a_failed_typecheck(monkeypatch):
+    monkeypatch.setattr(settings, "BUILDER_MAX_STEPS", 2)
+    monkeypatch.setattr(settings, "BUILDER_BUILD_MAX_STEPS", 2)
+    monkeypatch.setattr(settings, "BUILDER_BUILD_EXTENSION_STEPS", 2)
+    monkeypatch.setattr(settings, "BUILDER_COMPLETION_ROUNDS", 0)
+    monkeypatch.setattr(settings, "BUILDER_CRITIQUE_ROUNDS", 0)
+    forever = [("", [call("write_file", {"path": f"src/F{i}.tsx", "content": "export {}"}, f"c{i}")])
+               for i in range(8)]
+    model = install(monkeypatch, forever)
+    runner = TurnRunner(FakeSandbox({"src/App.tsx": "x"}), routing.EDIT, [], "tweak")
+    await collect(runner)
+    assert [r["model"] for r in model.requests][:3] == ["vendor/primary"] * 2 + ["vendor/fallback"]
+
+    # A first build whose last typecheck failed gets no extension either.
+    sb = FakeSandbox({"src/App.tsx": "x"})
+    sb.tsc_output = "src/F0.tsx(1,1): error TS2304: Cannot find name 'x'."
+    model = install(monkeypatch, forever)
+    runner = TurnRunner(sb, routing.BUILD, [], "build", spec_md="# Spec\nBig")
+    await collect(runner)
+    assert [r["model"] for r in model.requests][:3] == ["vendor/primary"] * 2 + ["vendor/fallback"]

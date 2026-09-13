@@ -93,7 +93,7 @@ async def test_bad_questions_are_sent_back_then_spec_written(monkeypatch):
     m = install(monkeypatch, [
         ("", [call("ask_user", {"questions": [{"question": "only one?", "options": ["a", "b"]}]})]),
         ("", [call("write_spec", {"markdown": "too short"}, "c2")]),
-        ("", [call("write_spec", {"markdown": SPEC}, "c3")]),
+        ("", [call("write_spec", {"markdown": SPEC, "recipe": "booking"}, "c3")]),
         ("The spec covers booking and sign-in. Edit it or start the build.", []),
     ])
     runner = PlanRunner([{"role": "user", "content": "salon app"},
@@ -102,6 +102,9 @@ async def test_bad_questions_are_sent_back_then_spec_written(monkeypatch):
     parts, c = await collect(runner)
     assert runner.result.reason == planning.SPEC_WRITTEN
     assert runner.result.spec_md == SPEC.strip()
+    assert runner.result.fullstack is False                     # not asked for: a site
+    assert runner.result.recipe == "booking"
+    assert m.requests[0]["tools"] == ["ask_user", "write_spec"]
     errors = [p for p in c.parts if p["type"].startswith("tool-") and p["state"] == "output-error"]
     assert "between 2 and 6" in errors[0]["errorText"]
     assert "too short" in errors[1]["errorText"]

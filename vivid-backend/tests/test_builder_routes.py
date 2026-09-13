@@ -366,7 +366,8 @@ def test_plan_mode_then_build(client, monkeypatch, fake_manager):
                  "arguments": {"questions": QUESTIONS}}]}
         elif "ask_user" in names and len(seen) == 3:
             yield {"type": "tool_calls", "calls": [
-                {"id": "c2", "name": "write_spec", "error": None, "arguments": {"markdown": SPEC}}]}
+                {"id": "c2", "name": "write_spec", "error": None,
+                 "arguments": {"markdown": SPEC, "fullstack": True, "recipe": "booking"}}]}
         elif "ask_user" in names:
             yield {"type": "token", "text": "Spec ready; edit it or build."}
         else:
@@ -393,6 +394,10 @@ def test_plan_mode_then_build(client, monkeypatch, fake_manager):
     assert any(isinstance(p, dict) and p["type"] == "data-spec" for p in parts)
     proj = client.get(f"/v1/builder/projects/{pid}").json()
     assert proj["mode"] == "plan" and proj["spec_md"] == SPEC.strip()
+    assert proj["fullstack"] is True                            # the plan asked for accounts
+    assert proj["recipe"] == "booking"
+    assert client.patch(f"/v1/builder/projects/{pid}", json={"fullstack": False}).json()["fullstack"] is False
+    client.patch(f"/v1/builder/projects/{pid}", json={"fullstack": True})
     msgs = client.get(f"/v1/builder/projects/{pid}/messages").json()
     assert [m["role"] for m in msgs] == ["user", "assistant", "user", "assistant"]
     assert msgs[2]["parts"][1]["type"] == "file"                # the image rode along
@@ -405,6 +410,9 @@ def test_plan_mode_then_build(client, monkeypatch, fake_manager):
     parts = sse_parts(client.post(f"/v1/builder/projects/{pid}/chat", json={"text": "build it"}).text)
     assert seen[-1][0][0] == "read_file" and seen[-1][1] == "vendor/builder"
     assert "Also: dark mode." in seen[-1][2]                     # spec injected into the prompt
+    assert "Recipe: booking" in seen[-1][2]
+    assert "Backend: not linked yet" in seen[-1][2]              # full-stack asked, no Supabase yet
+    assert "App logic skill" not in seen[-1][2]
     assert fake_manager.sandbox.files["spec.md"] == edited       # and written to the sandbox
     assert not fake_manager.fresh
     u = client.get(f"/v1/builder/projects/{pid}/usage").json()
@@ -417,6 +425,25 @@ def test_skip_plan_starts_in_build_mode(client, monkeypatch, fake_manager):
     assert client.get(f"/v1/builder/projects/{pid}").json()["mode"] == "build"
     client.post(f"/v1/builder/projects/{pid}/chat", json={"text": "go"})
     assert not fake_manager.fresh and "spec.md" not in fake_manager.sandbox.files
+    assert client.get(f"/v1/builder/projects/{pid}").json()["recipe"] is None   # nothing to go on
+
+
+def test_skip_plan_with_a_brief_picks_a_recipe_once(client, monkeypatch, fake_manager):
+    from app.builder import skills
+    picks = []
+
+    async def pick(text):
+        picks.append(text)
+        return "shop"
+    monkeypatch.setattr(skills, "pick_recipe", pick)
+    script(monkeypatch, [("Built.", []), ("Built.", [])])
+    pid = client.post("/v1/builder/projects", json={"skip_plan": True}).json()["id"]
+    client.patch(f"/v1/builder/projects/{pid}", json={"spec_md": "# Spec\nA sneaker shop"})
+    client.post(f"/v1/builder/projects/{pid}/chat", json={"text": "go"})
+    assert client.get(f"/v1/builder/projects/{pid}").json()["recipe"] == "shop"
+    client.post(f"/v1/builder/projects/{pid}/chat", json={"text": "more"})
+    assert len(picks) == 1                                       # stored, not asked again
+    assert client.patch(f"/v1/builder/projects/{pid}", json={"recipe": "booking"}).json()["recipe"] == "booking"
 
 
 def test_supabase_link_env_and_tools(client, maker, monkeypatch, fake_manager):
@@ -487,6 +514,42 @@ def test_supabase_manual_link_gives_env_but_no_tools(client, monkeypatch, fake_m
     client.post(f"/v1/builder/projects/{pid}/chat", json={"text": "build"})
     assert fake_manager.sandbox.files[".env"].startswith("VITE_SUPABASE_URL=https://abcdef.supabase.co\n")
     assert "apply_migration" not in seen[-1]
+
+    # A pasted connection string: verified, kept encrypted, and the
+    # migration tool appears; functions and secrets do not.
+    from app.builder import pgdirect
+    verified = []
+
+    async def verify(dsn):
+        verified.append(dsn)
+        if "bad" in dsn:
+            raise pgdirect.DirectError("password authentication failed")
+    monkeypatch.setattr(pgdirect, "verify", verify)
+    r = client.post(f"/v1/builder/projects/{pid}/supabase",
+                    json={"project_ref": "abcdef", "anon_key": "sb_publishable_q",
+                          "database_url": "postgresql://postgres:bad@db.abcdef.supabase.co:5432/postgres"})
+    assert r.status_code == 400 and "Could not connect" in r.json()["detail"]
+    r = client.post(f"/v1/builder/projects/{pid}/supabase",
+                    json={"project_ref": "abcdef", "anon_key": "sb_publishable_q",
+                          "database_url": "postgresql://postgres:pw@db.abcdef.supabase.co:5432/postgres"})
+    assert r.status_code == 200 and len(verified) == 2
+    client.post(f"/v1/builder/projects/{pid}/chat", json={"text": "build"})
+    assert "apply_migration" in seen[-1] and "deploy_edge_function" not in seen[-1]
+
+    # Payments on a database-only project: the public key goes to .env, and
+    # nothing is asked of a management API that is not there.
+    from app.services.connectors import paystack as paystack_connector
+
+    async def verify_ps(token, config=None):
+        return {"login": "test", "mode": "test", "config": {"public_key": config["public_key"], "mode": "test"}}
+    monkeypatch.setattr(paystack_connector, "verify", verify_ps)
+    from app.api.routes.connectors import router as connectors_router
+    client.app.include_router(connectors_router, prefix="/v1")
+    r = client.post("/v1/connectors", json={"provider": "paystack", "token": "sk_test_" + "a" * 24,
+                                            "public_key": "pk_test_" + "b" * 24})
+    assert r.status_code == 201, r.text
+    r = client.post(f"/v1/builder/projects/{pid}/payments")
+    assert r.status_code == 200 and r.json()["payments_provider"] == "paystack"
 
 
 def test_supabase_oauth_routes(client, maker, monkeypatch):
@@ -758,3 +821,53 @@ def test_undo_and_logs(client, monkeypatch, fake_manager, fake_blob):
     assert client.post(f"/v1/builder/projects/{pid}/undo").status_code == 409   # already at 1
     fake_manager.sandbox.log = "vite ready\nerror: boom\n"
     assert client.get(f"/v1/builder/projects/{pid}/logs?lines=1").json() == {"lines": ["error: boom"]}
+
+
+def test_google_maps_connector_and_project_maps(client, monkeypatch, fake_manager):
+    """A Maps key is verified by one geocoding call, stored encrypted, and
+    enabling maps on a project puts it in .env with the skill in the prompt."""
+    import json as _json
+    from cryptography.fernet import Fernet
+    from app.api.routes.connectors import router as connectors_router
+    from app.services.connectors import google_maps
+
+    monkeypatch.setattr(settings, "SECRETS_ENCRYPTION_KEY", Fernet.generate_key().decode())
+    client.app.include_router(connectors_router, prefix="/v1")
+
+    class Resp:
+        def __init__(self, body): self.status_code, self._body = 200, body
+        @property
+        def content(self): return _json.dumps(self._body).encode()
+        def json(self): return self._body
+    answers = {"AIza" + "x" * 35: {"status": "OK", "results": [1]},
+               "AIza" + "d" * 35: {"status": "REQUEST_DENIED", "error_message": "API not enabled"}}
+
+    class FakeHTTP:
+        async def get(self, url, params=None, headers=None, timeout=None):
+            assert url.endswith("/geocode/json") and params["address"].startswith("Lagos")
+            return Resp(answers[params["key"]])
+    monkeypatch.setattr(google_maps.http, "client", lambda: FakeHTTP())
+
+    r = client.post("/v1/connectors", json={"provider": "google_maps", "token": "nope"})
+    assert r.status_code == 422 and "AIza" in r.json()["detail"]
+    r = client.post("/v1/connectors", json={"provider": "google_maps", "token": "AIza" + "d" * 35})
+    assert r.status_code == 422 and "API not enabled" in r.json()["detail"]
+    r = client.post("/v1/connectors", json={"provider": "google_maps", "token": "AIza" + "x" * 35})
+    assert r.status_code == 201 and r.json()["provider"] == "google_maps"
+
+    seen = []
+    async def stream_chat(messages, tools, max_tokens=None, endpoint=None, temperature=None):
+        seen.append(messages[0]["content"])
+        yield {"type": "token", "text": "ok"}
+        yield {"type": "done", "finish_reason": "stop", "usage": None}
+    monkeypatch.setattr(code_llm, "stream_chat", stream_chat)
+
+    pid = client.post("/v1/builder/projects", json={"skip_plan": True}).json()["id"]
+    assert client.get(f"/v1/builder/projects/{pid}").json()["maps_provider"] == "none"
+    r = client.post(f"/v1/builder/projects/{pid}/maps")
+    assert r.status_code == 200 and r.json()["maps_provider"] == "google"
+    client.post(f"/v1/builder/projects/{pid}/chat", json={"text": "add a map"})
+    assert fake_manager.sandbox.files[".env"] == "VITE_GOOGLE_MAPS_KEY=AIza" + "x" * 35 + "\n"
+    assert "## Maps skill" in seen[-1] and "PlaceAutocomplete" in seen[-1]
+    r = client.delete(f"/v1/builder/projects/{pid}/maps")
+    assert r.json()["maps_provider"] == "none"

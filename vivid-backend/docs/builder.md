@@ -15,7 +15,7 @@ POST   /v1/builder/projects                 {name?, skip_plan?} -> project (mode
 POST   /v1/builder/projects/{id}/build      leave plan mode    -> project (mode: build)
 GET    /v1/builder/projects                                    -> [project]
 GET    /v1/builder/projects/{id}                               -> project
-PATCH  /v1/builder/projects/{id}            {name?, spec_md?}  -> project
+PATCH  /v1/builder/projects/{id}            {name?, spec_md?, fullstack?}  -> project
 DELETE /v1/builder/projects/{id}            kills the sandbox too
 GET    /v1/builder/projects/{id}/messages                      -> [message]
 POST   /v1/builder/projects/{id}/chat       {text}             -> event stream
@@ -133,7 +133,11 @@ desktop, without the user knowing any of it exists:
   `BUILDER_COPY_SKILL` turns it off. Adapted from boraoztunc/skills and
   stop-slop; see `skills/copy/NOTICE.md`.
 - **The app-logic skill** (`skills/fullstack/`): attached to every turn of a
-  project that has Supabase linked. It fixes the shape of a real app:
+  project the user asked to be full-stack (`fullstack` on the project, set
+  by the plan's `write_spec` or by `PATCH`) once Supabase is linked. A
+  site stays a site by default; a full-stack project without a backend gets
+  a prompt note to build with local state and ask the user to connect
+  Supabase. It fixes the shape of a real app:
   `profiles` with roles filled by a sign-up trigger, `is_admin()` /
   `is_staff()` helpers and a policy set per table, money in kobo, orders
   and bookings as state machines moved by one SQL function that also logs
@@ -201,6 +205,7 @@ POST   /v1/connectors {provider: "supabase", token: "sbp_..."}   a pasted person
 GET    /v1/connectors                       each connector; Supabase rows list `projects`
 POST   /v1/builder/projects/{id}/supabase  {project_ref} -> project (backend_mode: byo)
                                             or {project_ref, url?, anon_key} with no connector
+                                            + database_url (Postgres DSN): migrations over Postgres, no connector needed
 DELETE /v1/builder/projects/{id}/supabase  unlink
 ```
 
@@ -228,6 +233,8 @@ The user connects their own Paystack account once, as a connector:
 POST /v1/connectors {provider: "paystack", token: "sk_...", public_key: "pk_..."}
 POST   /v1/builder/projects/{id}/payments   -> project (payments_provider: paystack)
 DELETE /v1/builder/projects/{id}/payments
+POST   /v1/builder/projects/{id}/maps       -> project (maps_provider: google)
+DELETE /v1/builder/projects/{id}/maps
 ```
 
 Both keys must be test or both live; the secret is verified against

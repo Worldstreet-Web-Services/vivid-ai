@@ -15,7 +15,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import AsyncIterator, Callable
 
-from app.builder import routing, stream
+from app.builder import routing, skills, stream
 from app.builder import meta
 from app.builder.loop import ModelStep
 
@@ -72,10 +72,34 @@ SCHEMAS = [
             "Out of scope. Concrete and short: a builder reads it every step."),
         "parameters": {
             "type": "object",
-            "properties": {"markdown": {"type": "string"}},
+            "properties": {
+                "markdown": {"type": "string"},
+                "recipe": {
+                    "type": "string",
+                    "description": (
+                        "The page recipe closest to this app, by name from the list in "
+                        "the instructions; omit when none fits.")},
+                "fullstack": {
+                    "type": "boolean",
+                    "description": (
+                        "true only when the user asked for accounts, sign-in, per-user "
+                        "data, an owner or admin who manages live records, or said "
+                        "full-stack or backend. A site, a portfolio, a landing page, a "
+                        "simple shop with an order form is false (the default).")},
+            },
             "required": ["markdown"],
         }}},
 ]
+
+def tool_schemas() -> list[dict]:
+    """The plan tools with the recipe list of the moment: recipes are files,
+    so the enum is read when a turn starts, not when the module loads."""
+    out = json.loads(json.dumps(SCHEMAS))
+    names = skills.recipe_names()
+    if names:
+        out[1]["function"]["parameters"]["properties"]["recipe"]["enum"] = names
+    return out
+
 
 SYSTEM = """You are Vivid, planning a web app with the user before it is built. The user \
 may not be a developer. The app will be a React single-page app built from a template \
@@ -95,11 +119,23 @@ The user uploads files beside the chat; uploaded files are listed for you under 
 "Files the user uploaded" and appear at /uploads/<name> in the app. If they have no \
 pictures, say the builder will generate product and hero images and set the brand name \
 as a wordmark, and put that in the spec.
+   By default the app is a site: pages, a catalogue, forms, a cart, an owner area with a \
+PIN, all kept in the browser. It becomes a full-stack app (real sign-up and sign-in, \
+records that live on a server, roles, an owner who manages live orders or jobs) only when \
+the user asks for that, in those words or in what the idea needs (a delivery platform where \
+riders, senders and a dispatcher each see their own jobs cannot be a site). If the idea \
+sits on the line, ask. Full-stack is the `fullstack` flag on write_spec; its spec says \
+"Supabase (accounts, data)" under Integrations, and your closing sentence tells the user \
+they will connect their Supabase project in the project settings before the build.
 3. When you know enough, call write_spec. One round of questions is normal, two is \
 the most; after the user has answered twice, write the spec with sensible choices for \
 anything still open rather than asking again. \
 If files were uploaded, name them in the spec where they are used (the logo in the \
 header, each product photo on its product).
+
+Pick the page recipe closest to the app for write_spec's `recipe` (the builder \
+follows it for pages and sections):
+{recipes}
 
 The spec has exactly these headings, in this order, each with a few plain lines or \
 bullets: Goal, Users, Pages, Data model, Integrations, Out of scope. Pages lists each \
@@ -120,6 +156,8 @@ class PlanResult:
     model: str = ""
     spec_md: str | None = None
     questions: list[dict] | None = None
+    fullstack: bool = False
+    recipe: str | None = None
     #: The expanded brief from the first turn's meta-prompt.
     brief_md: str | None = None
     calls: list = field(default_factory=list)
@@ -219,7 +257,8 @@ class PlanRunner:
         yield stream.start(self.message_id)
         endpoint = routing.endpoint_for(routing.PLAN)
         self.result.model = endpoint.model
-        system = SYSTEM + ("\n" + self.assets_block if self.assets_block else "")
+        system = SYSTEM.replace("{recipes}", skills.recipe_menu() or "- (none on disk)")
+        system += ("\n" + self.assets_block if self.assets_block else "")
         messages = [{"role": "system", "content": system}]
         messages += self.history
 
@@ -255,7 +294,7 @@ class PlanRunner:
                 break
             self.result.steps += 1
             yield stream.start_step()
-            call_step = ModelStep(messages, SCHEMAS, endpoint)
+            call_step = ModelStep(messages, tool_schemas(), endpoint)
             async for part in call_step.run():
                 yield part
             if call_step.failed is not None:
@@ -320,6 +359,9 @@ class PlanRunner:
             if problem:
                 return f"error: {problem}.", False
             self.result.spec_md = spec
+            self.result.fullstack = bool(args.get("fullstack", False))
+            recipe = str(args.get("recipe") or "").strip().lower()
+            self.result.recipe = recipe if recipe in skills.recipe_names() else None
             self.result.reason = SPEC_WRITTEN
             return "Spec saved. Tell the user what it covers in one or two sentences.", False
         return f"error: no tool named {call['name']!r} in plan mode.", False

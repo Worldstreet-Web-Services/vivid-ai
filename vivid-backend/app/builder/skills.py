@@ -16,21 +16,6 @@ from app.core.config import settings
 
 log = logging.getLogger("vivid.builder.skills")
 
-#: Which recipe a project wants, by words in its spec and first request.
-_RECIPE_WORDS = {
-    "shop": ("shop", "store", "ecommerce", "e-commerce", "sell", "products", "cart",
-             "checkout", "sneaker", "boutique", "catalog", "catalogue"),
-    "booking": ("booking", "appointment", "reserve", "reservation", "salon", "barber",
-                "clinic", "schedule", "slot", "class", "spa"),
-    "dashboard": ("dashboard", "admin", "internal tool", "inventory", "crm", "manage",
-                  "tracker", "analytics", "expense"),
-    "portfolio": ("portfolio", "photographer", "my work", "showcase", "gallery",
-                  "designer", "artist", "creator"),
-    "landing": ("landing", "bakery", "restaurant", "cafe", "agency", "one page",
-                "one-page", "brochure", "menu", "launch"),
-}
-
-
 def _strip_frontmatter(text: str) -> str:
     if text.startswith("---"):
         end = text.find("\n---", 3)
@@ -57,23 +42,64 @@ def clear_cache() -> None:
     _read.cache_clear()
 
 
-def recipe_for(text: str) -> str | None:
-    """The recipe whose words appear most in the spec and request."""
-    low = (text or "").lower()
-    scores = {name: sum(low.count(w) for w in words) for name, words in _RECIPE_WORDS.items()}
-    best = max(scores, key=scores.get)
-    return best if scores[best] > 0 else None
+_TITLE = re.compile(r"^#\s*Recipe:\s*(.+)$", re.M)
 
 
-def design_block(spec_md: str | None, user_text: str = "") -> str:
-    """The design skill for a UI turn: method, palettes, fonts, one recipe."""
+def recipes() -> list[dict]:
+    """The page recipes on disk, name and title, so the planner can offer
+    exactly what exists: dropping a file in the folder adds a recipe."""
+    folder = _root() / "design" / "references" / "recipes"
+    out = []
+    for path in sorted(folder.glob("*.md")):
+        text = _read(f"design/references/recipes/{path.name}")
+        m = _TITLE.search(text)
+        out.append({"name": path.stem, "title": (m.group(1).strip() if m else path.stem)})
+    return out
+
+
+def recipe_names() -> list[str]:
+    return [r["name"] for r in recipes()]
+
+
+def recipe_menu() -> str:
+    """One line per recipe for a prompt."""
+    return "\n".join(f"- {r['name']}: {r['title']}" for r in recipes())
+
+
+async def pick_recipe(text: str) -> str | None:
+    """Ask the planning model which recipe fits a project that skipped plan
+    mode. One short call; the answer is stored on the project so it runs
+    once. Returns None when nothing fits or the call fails."""
+    names = recipe_names()
+    if not names or not (text or "").strip():
+        return None
+    from app.builder import routing
+    from app.services.models_gateway import code_llm
+    prompt = ("Which page recipe fits this app best? Answer with the recipe name only, "
+              f"or 'none'.\n\nRecipes:\n{recipe_menu()}\n\nApp:\n{text[:2000]}")
+    try:
+        out = []
+        async for ev in code_llm.stream_chat([{"role": "user", "content": prompt}], [],
+                                             endpoint=routing.endpoint_for(routing.PLAN),
+                                             max_tokens=20, temperature=0):
+            if ev.get("type") == "token":
+                out.append(ev["text"])
+        answer = "".join(out).strip().lower().strip(".'\"`")
+    except Exception as e:                                 # a missing recipe is not a failed turn
+        log.warning("recipe pick failed: %s", e)
+        return None
+    return answer if answer in names else None
+
+
+def design_block(spec_md: str | None, user_text: str = "", recipe: str | None = None) -> str:
+    """The design skill for a UI turn: method, palettes, fonts, and the
+    recipe the plan chose (or pick_recipe stored) for this project."""
     if not settings.BUILDER_DESIGN_SKILL:
         return ""
     parts = [_read("design/SKILL.md")]
     if not parts[0]:
         return ""
-    recipe = recipe_for(f"{spec_md or ''}\n{user_text}")
-    if recipe:
+    if recipe and recipe in recipe_names():
         text = _read(f"design/references/recipes/{recipe}.md")
         if text:
             parts.append(text)
@@ -115,15 +141,24 @@ def fullstack_block(backend: bool) -> str:
     return "## App logic skill\n" + block
 
 
+def maps_block(provider: str | None) -> str:
+    """The maps skill, when the project has a Google Maps key."""
+    if not provider or provider == "none":
+        return ""
+    text = _read("maps/SKILL.md")
+    return "## Maps skill\n" + text if text else ""
+
+
 def ui_block(spec_md: str | None, user_text: str = "",
-             payments: str | None = None, backend: bool = False) -> str:
+             payments: str | None = None, backend: bool = False,
+             recipe: str | None = None, maps: str | None = None) -> str:
     """Everything a build or edit turn gets: the design skill with its
     recipe, the copy skill, the app-logic skill when a backend is linked,
     and the payments skill when payments are enabled. The design skill is
     first because the recipe names the sections the copy fills; app logic
     comes before payments because the payments flow builds on its orders."""
-    blocks = (design_block(spec_md, user_text), copy_block(),
-              fullstack_block(backend), payments_block(payments))
+    blocks = (design_block(spec_md, user_text, recipe), copy_block(),
+              fullstack_block(backend), payments_block(payments), maps_block(maps))
     return "\n\n".join(b for b in blocks if b)
 
 

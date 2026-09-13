@@ -26,18 +26,41 @@ def env(monkeypatch):
     skills.clear_cache()
 
 
-def test_recipe_routing_and_block():
-    assert skills.available() == ["copy", "design", "fullstack", "payments"]
-    assert skills.recipe_for("an ecommerce website for my sneakers") == "shop"
-    assert skills.recipe_for("a booking app for my salon") == "booking"
-    assert skills.recipe_for("landing page for a bakery") == "landing"
-    assert skills.recipe_for("expense tracker with an admin view") == "dashboard"
-    assert skills.recipe_for("todo list") is None
-    block = skills.design_block("# Spec\nSell sneakers online", "")
+def test_recipes_come_from_disk_and_the_block_carries_the_chosen_one():
+    assert skills.available() == ["copy", "design", "fullstack", "maps", "payments"]
+    names = skills.recipe_names()
+    assert names == ["booking", "dashboard", "landing", "platform", "portfolio", "shop"]
+    menu = skills.recipe_menu()
+    assert "- platform: platform (delivery, logistics" in menu and "- shop: shop" in menu
+    block = skills.design_block("# Spec\nSell sneakers online", "", recipe="shop")
     assert block.startswith("## Design skill\n# Design method")
     assert "Recipe: shop" in block and "Recipe: booking" not in block
-    assert "| forest |" in block and "Space Grotesk" in block
+    assert "| forest |" in block and "| navy-lime |" in block and "Space Grotesk" in block
     assert "name: design" not in block                      # frontmatter stripped
+    assert "Black Nigerian" in block and "ProductMockup" in block
+    none = skills.design_block("# Spec\nSell sneakers online", "")
+    assert "Recipe:" not in none                            # no guess from keywords
+    assert "Recipe:" not in skills.design_block("x", "", recipe="not-a-recipe")
+
+
+async def test_pick_recipe_asks_the_plan_model_once(monkeypatch):
+    calls = []
+
+    async def stream_chat(messages, tools, max_tokens=None, endpoint=None, temperature=None):
+        calls.append(messages[0]["content"])
+        yield {"type": "token", "text": " Platform.\n"}
+        yield {"type": "done", "finish_reason": "stop", "usage": None}
+    monkeypatch.setattr(code_llm, "stream_chat", stream_chat)
+    monkeypatch.setattr(settings, "PLAN_MODEL", "vendor/planner")
+    assert await skills.pick_recipe("a delivery app for Lagos") == "platform"
+    assert "- platform:" in calls[0] and "a delivery app" in calls[0]
+    assert await skills.pick_recipe("") is None
+
+    async def broken(*a, **k):
+        raise RuntimeError("down")
+        yield
+    monkeypatch.setattr(code_llm, "stream_chat", broken)
+    assert await skills.pick_recipe("anything") is None
 
 
 def test_skill_can_be_turned_off(monkeypatch):
@@ -63,8 +86,8 @@ def test_fullstack_skill_only_with_a_backend(monkeypatch):
 
 
 def test_copy_skill_rides_with_the_design_skill():
-    assert skills.available() == ["copy", "design", "fullstack", "payments"]
-    block = skills.ui_block("# Spec\nA salon booking app", "")
+    assert skills.available() == ["copy", "design", "fullstack", "maps", "payments"]
+    block = skills.ui_block("# Spec\nA salon booking app", "", recipe="booking")
     assert "## Design skill" in block and "## Copy skill" in block
     assert block.index("## Design skill") < block.index("## Copy skill")
     assert "Recipe: booking" in block
@@ -122,7 +145,7 @@ async def test_turn_critiques_after_answering(monkeypatch):
 
     sb = FakeSandbox({"src/App.tsx": "x"})
     runner = TurnRunner(sb, routing.BUILD, [], "a shop", spec_md="# Spec\nA sneaker shop",
-                        project_id="p1")
+                        project_id="p1", recipe="shop")
     parts, c = await collect(runner)
     assert runner.result.reason == loop.ANSWERED and runner.result.critique_rounds == 1
     assert runner.result.steps == 4 and sb.files["src/App.tsx"] == "v2"
@@ -196,12 +219,12 @@ async def test_generate_image_tool_stores_and_returns_a_path(monkeypatch):
     out = await tools.execute("generate_image", {"prompt": "a red running sneaker, side view",
                                                  "name": "air-zoom-red", "aspect": "square"},
                               sb, None, maker)
-    assert out.text.startswith("Image ready at /uploads/air-zoom-red.png (64x64")
+    assert out.text.startswith("Image ready at /uploads/air-zoom-red.jpg (64x64")
     assert "1 more this turn" in out.text
     assert calls[0][1] == "1:1" and "Photorealistic" in calls[0][0]
-    assert added[0] == ("p1", "air-zoom-red.png", "image/png", len(png(64, 64)))
+    assert added[0][:3] == ("p1", "air-zoom-red.jpg", "image/jpeg")   # photos are re-encoded
     assert ("usage", "model", "images") in added
-    assert sb.blobs["public/uploads/air-zoom-red.png"] == png(64, 64)
+    assert sb.blobs["public/uploads/air-zoom-red.jpg"][:3] == b"\xff\xd8\xff"
 
     await tools.execute("generate_image", {"prompt": "a white court sneaker", "name": "court"}, sb, None, maker)
     out = await tools.execute("generate_image", {"prompt": "one more please", "name": "third"}, sb, None, maker)
@@ -314,8 +337,8 @@ async def test_generate_image_kinds(monkeypatch):
     await maker.make("a lightning bolt in a circle", "mark", aspect="wide", kind="logo")
     await maker.make("three sneakers on a dark table", "hero", aspect="wide", kind="lifestyle")
     await maker.make("a white sneaker", "shoe", aspect="square")
-    assert prompts[0][1] == "1:1" and "no text" in prompts[0][0] and "vector-style logo" in prompts[0][0]
-    assert prompts[1][1] == "16:9" and "dramatic" in prompts[1][0]
+    assert prompts[0][1] == "1:1" and "no text" in prompts[0][0] and "app-icon style logo" in prompts[0][0]
+    assert prompts[1][1] == "16:9" and "premium brand campaign" in prompts[1][0]
     assert "product photography" in prompts[2][0]
 
 
@@ -423,3 +446,78 @@ async def test_typecheck_failure_in_a_step_counts_once(monkeypatch):
     parts, _ = await collect(runner)
     assert runner.result.typecheck_failures == 1
     assert runner.result.reason in (loop.TYPECHECK_STRIKES, loop.ANSWERED)
+
+
+async def test_images_asked_in_one_step_are_made_together(monkeypatch):
+    """Three pictures in one step take one picture's time, and the cap is
+    honoured even though the calls run concurrently."""
+    import asyncio
+    import time
+    from app.builder import images as images_mod
+    from app.services.models_gateway import media
+    from tests.test_builder_assets import png
+
+    async def fake_generate(prompt, aspect_ratio="1:1"):
+        await asyncio.sleep(0.3)
+        return png(8, 8), "image/png"
+    monkeypatch.setattr(media, "generate_image", fake_generate)
+
+    class FakeAsset:
+        def __init__(self, name): self.name, self.meta = name, {"width": 8, "height": 8}
+
+    async def fake_add(db, project_id, filename, mime, data): return FakeAsset(filename)
+
+    class FakeSession:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        def add(self, row): pass
+        async def commit(self): pass
+    monkeypatch.setattr(images_mod.assets, "add", fake_add)
+    monkeypatch.setattr(images_mod, "async_session", lambda: FakeSession())
+    monkeypatch.setattr(settings, "BUILDER_CRITIQUE_ROUNDS", 0)
+
+    sb = FakeSandbox({"src/App.tsx": "x"})
+    maker = images_mod.ImageMaker("p1", sb, limit=2)
+    model = ScriptedModel([
+        ("Pictures first.", [call("generate_image", {"prompt": "a red sneaker on a grey surface", "name": "one"}, "c1"),
+                             call("generate_image", {"prompt": "a white sneaker on a grey surface", "name": "two"}, "c2"),
+                             call("generate_image", {"prompt": "a blue sneaker on a grey surface", "name": "three"}, "c3")]),
+        ("Done.", []),
+    ])
+    monkeypatch.setattr(code_llm, "stream_chat", model.stream_chat)
+    runner = TurnRunner(sb, routing.EDIT, [], "pictures", images=maker)
+    t = time.monotonic()
+    parts, c = await collect(runner)
+    assert time.monotonic() - t < 0.8                          # concurrent, not 0.9 s serial
+    outs = [p for p in c.parts if p["type"] == "tool-generate_image"]
+    texts = [p.get("output") or p.get("errorText") or "" for p in outs]
+    assert sum(t.startswith("Image ready") for t in texts) == 2, texts
+    assert sum("images this turn" in t for t in texts) == 1   # the cap held under concurrency
+    assert [p["data"]["text"] for p in parts if p["type"] == "data-status"][0] == "Making 3 pictures"
+
+
+def test_compress_makes_photos_jpeg_and_keeps_logos_png():
+    import io
+    from PIL import Image
+    from app.builder import images as images_mod
+    from tests.test_builder_assets import png
+
+    import os
+    noise = Image.frombytes("RGB", (2048, 1536), os.urandom(2048 * 1536 * 3))
+    big = io.BytesIO(); noise.save(big, format="PNG")
+    data, mime = images_mod.compress(big.getvalue(), "image/png", "photo")
+    assert mime == "image/jpeg" and len(data) < len(big.getvalue()) // 4
+    assert Image.open(io.BytesIO(data)).size == (1280, 960)           # capped, ratio kept
+    data, mime = images_mod.compress(png(64, 64), "image/png", "logo")
+    assert mime == "image/png" and data[:4] == b"\x89PNG"
+    assert images_mod.compress(b"not an image", "image/png", "photo") == (b"not an image", "image/png")
+
+
+def test_maps_skill_only_with_a_key():
+    assert skills.maps_block(None) == "" and skills.maps_block("none") == ""
+    block = skills.maps_block("google")
+    assert block.startswith("## Maps skill\n# Maps with Google") and "PlaceAutocomplete" in block
+    ui = skills.ui_block("# Spec\nA delivery app", "", payments="paystack", backend=True,
+                         recipe="platform", maps="google")
+    assert ui.index("## Payments skill") < ui.index("## Maps skill")
+    assert "## Maps skill" not in skills.ui_block("x", "")

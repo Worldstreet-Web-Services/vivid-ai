@@ -302,6 +302,10 @@ class Settings(BaseSettings):
     BUILDER_MAX_STEPS: int = 20
     # A first build writes a whole app and gets its own, larger cap.
     BUILDER_BUILD_MAX_STEPS: int = 40
+    # Once, when a first build reaches the cap while still typecheck-clean.
+    BUILDER_BUILD_EXTENSION_STEPS: int = 20
+    # Seconds allowed for one file write into the sandbox (images are ~1 MB).
+    BUILDER_SANDBOX_WRITE_TIMEOUT: float = 120.0
     # After a first build answers, one review compares the app with the spec
     # (pages, nav, seeded data, sections) and fills the gaps, with this many
     # extra steps. Runs before the visual critique.
@@ -399,7 +403,9 @@ class Settings(BaseSettings):
     BUILDER_PUBLISH_HOST: str = "{alias}.{project}.pages.dev"
     BUILDER_BUILD_TIMEOUT: int = 300
     # A built site above this is refused (a stray video in public/).
-    BUILDER_PUBLISH_MAX_BYTES: int = 25 * 1024 * 1024
+    # Cloudflare caps a single file at 25 MiB, not the site; generated
+    # pictures are about a megabyte each, so a real catalogue needs room.
+    BUILDER_PUBLISH_MAX_BYTES: int = 120 * 1024 * 1024
 
     # User-uploaded assets for the builder (logos, product photos, fonts).
     BUILDER_ASSET_MAX_BYTES: int = 8 * 1024 * 1024

@@ -12,6 +12,8 @@ class ProjectCreate(BaseModel):
 class ProjectUpdate(BaseModel):
     name: str | None = Field(default=None, max_length=120)
     spec_md: str | None = None
+    fullstack: bool | None = None
+    recipe: str | None = Field(default=None, max_length=32)
 
 
 class ProjectOut(BaseModel):
@@ -26,6 +28,9 @@ class ProjectOut(BaseModel):
     backend_mode: str
     supabase_project_ref: str | None
     payments_provider: str = "none"
+    maps_provider: str = "none"
+    fullstack: bool = False
+    recipe: str | None = None
     published_url: str | None
     created_at: datetime
     updated_at: datetime
@@ -93,6 +98,9 @@ class SupabaseLinkIn(BaseModel):
     #: publishable (anon) key, both safe in a browser.
     url: str | None = Field(default=None, max_length=256)
     anon_key: str | None = Field(default=None, max_length=512)
+    #: The Postgres connection string from the dashboard's Connect panel.
+    #: With it the builder applies migrations itself, no account link needed.
+    database_url: str | None = Field(default=None, max_length=512)
 
 
 class PublishOut(BaseModel):

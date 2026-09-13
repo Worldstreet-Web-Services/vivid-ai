@@ -8,9 +8,10 @@ Each provider module exposes:
 The pipeline loads a user's connectors each turn and merges their tools into
 the planner's roster — a connector is invisible to every other user.
 """
-from app.services.connectors import github, paystack, supabase
+from app.services.connectors import github, google_maps, paystack, supabase
 
-PROVIDERS = {"github": github, "paystack": paystack, "supabase": supabase}
+PROVIDERS = {"github": github, "google_maps": google_maps, "paystack": paystack,
+             "supabase": supabase}
 
 
 def tools_for(connectors) -> dict:
