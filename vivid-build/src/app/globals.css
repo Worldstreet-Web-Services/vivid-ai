@@ -1,0 +1,209 @@
+@import "tailwindcss";
+
+/* `light:` styles apply when <html data-theme="light">. Dark is the default. */
+@custom-variant light (&:where([data-theme="light"], [data-theme="light"] *));
+
+/* ---------- Design tokens (dark default) ---------- */
+:root {
+  color-scheme: dark;
+  --bg: #0a0b0d;
+  --bg2: #0c0e11;
+  --surface: #0e1115;
+  --surface2: #13171c;
+  --line: #1c2027;
+  --line2: #262b33;
+  --line3: #2e343d;
+  --fg: #eef2f7;
+  --fg2: #c2cad5;
+  --muted: #98a1ae;
+  --muted2: #8a929e;
+  --muted3: #6f7783;
+  --accent: #d6dde7;
+  --warn: #c98a8a;
+  --btn-grad: linear-gradient(180deg, #f5f8fc, #bcc6d3);
+  --btn-fg: #0a0b0d;
+  --btn-sheen: rgba(255, 255, 255, 0.9);
+  --logo-grad: linear-gradient(145deg, #ffffff, #9faab9);
+  --logo-ink: #0a0b0d;
+  --bar-grad: linear-gradient(90deg, #8a929e, #f5f8fc);
+  --card-grad: linear-gradient(180deg, #13171c, #0e1114);
+  --header-bg: rgba(10, 11, 13, 0.85);
+  --header-bg-scrolled: rgba(10, 11, 13, 0.94);
+  --chip-bg: rgba(10, 11, 13, 0.72);
+  --glow: rgba(214, 221, 231, 0.14);
+  --glow-strong: rgba(214, 221, 231, 0.16);
+  --tint: rgba(214, 221, 231, 0.07);
+  --shot-filter: none;
+
+  /* Code tokens. The rest of the app is greyscale, so these are the only
+     saturated colours in it — kept muted so they read as ink, not as UI. */
+  --code-comment: #5f6b7a;
+  --code-string: #9ec1a3;
+  --code-number: #d3ab8a;
+  --code-keyword: #c4a2d8;
+  --code-type: #8fb6d9;
+  --code-fn: #e0c98d;
+  --code-tag: #d99a9a;
+  --code-attr: #9dc0e0;
+  --code-prop: #8fc2c2;
+  --code-punct: #7d8794;
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f5f6f8;
+  --bg2: #eceef2;
+  --surface: #ffffff;
+  --surface2: #f7f8fa;
+  --line: #e3e7ed;
+  --line2: #d7dce5;
+  --line3: #c3cad6;
+  --fg: #10141a;
+  --fg2: #333b47;
+  --muted: #5d6673;
+  --muted2: #6e7684;
+  --muted3: #8b93a0;
+  --accent: #2a313b;
+  --warn: #a3595a;
+  --btn-grad: linear-gradient(180deg, #3b4350, #151a21);
+  --btn-fg: #ffffff;
+  --btn-sheen: rgba(255, 255, 255, 0.18);
+  --logo-grad: linear-gradient(145deg, #4a5260, #10141a);
+  --logo-ink: #ffffff;
+  --bar-grad: linear-gradient(90deg, #8b93a0, #10141a);
+  --card-grad: linear-gradient(180deg, #ffffff, #f5f6f8);
+  --header-bg: rgba(245, 246, 248, 0.85);
+  --header-bg-scrolled: rgba(245, 246, 248, 0.95);
+  --chip-bg: rgba(255, 255, 255, 0.8);
+  --glow: rgba(16, 20, 26, 0.08);
+  --glow-strong: rgba(16, 20, 26, 0.1);
+  --tint: rgba(16, 20, 26, 0.05);
+  --shot-filter: saturate(0.55) contrast(0.98) brightness(1.04);
+
+  --code-comment: #8b93a0;
+  --code-string: #3f7a52;
+  --code-number: #9a5b2e;
+  --code-keyword: #7b4ea8;
+  --code-type: #2f6ea8;
+  --code-fn: #8a6a1f;
+  --code-tag: #a8444a;
+  --code-attr: #2f6ea8;
+  --code-prop: #226b6b;
+  --code-punct: #6e7684;
+}
+
+/* ---------- Tailwind theme mapping ---------- */
+@theme inline {
+  --font-sans: var(--font-jakarta), Helvetica, sans-serif;
+
+  --color-bg: var(--bg);
+  --color-bg-2: var(--bg2);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface2);
+  --color-line: var(--line);
+  --color-line-2: var(--line2);
+  --color-line-3: var(--line3);
+  --color-fg: var(--fg);
+  --color-fg-2: var(--fg2);
+  --color-muted: var(--muted);
+  --color-muted-2: var(--muted2);
+  --color-muted-3: var(--muted3);
+  --color-accent: var(--accent);
+  --color-warn: var(--warn);
+  --color-btn-fg: var(--btn-fg);
+  --color-logo-ink: var(--logo-ink);
+  --color-chip: var(--chip-bg);
+  --color-tint: var(--tint);
+
+  --color-code-comment: var(--code-comment);
+  --color-code-string: var(--code-string);
+  --color-code-number: var(--code-number);
+  --color-code-keyword: var(--code-keyword);
+  --color-code-type: var(--code-type);
+  --color-code-fn: var(--code-fn);
+  --color-code-tag: var(--code-tag);
+  --color-code-attr: var(--code-attr);
+  --color-code-prop: var(--code-prop);
+  --color-code-punct: var(--code-punct);
+}
+
+@theme {
+  --ease-soft: cubic-bezier(0.2, 0.7, 0.3, 1);
+  --animate-caret: caret 1s steps(1) infinite;
+
+  @keyframes caret {
+    0%,
+    49% {
+      opacity: 1;
+    }
+    50%,
+    100% {
+      opacity: 0;
+    }
+  }
+}
+
+/* ---------- Custom utilities ---------- */
+@utility bg-btn {
+  background-image: var(--btn-grad);
+}
+@utility bg-logo {
+  background-image: var(--logo-grad);
+}
+@utility bg-bar {
+  background-image: var(--bar-grad);
+}
+@utility bg-card {
+  background-image: var(--card-grad);
+}
+@utility shadow-sheen {
+  box-shadow: inset 0 1px 0 var(--btn-sheen);
+}
+@utility px-gutter {
+  padding-inline: clamp(16px, 4vw, 56px);
+}
+@utility filter-shot {
+  filter: var(--shot-filter);
+}
+
+/* Scrollable, but without the bar taking up room or drawing the eye. */
+@utility no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+
+  &::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+  }
+}
+
+/* ---------- Base ---------- */
+@layer base {
+  html {
+    scroll-padding-top: 80px;
+  }
+
+  body {
+    background-color: var(--bg);
+    color: var(--fg);
+  }
+
+  ::selection {
+    background-color: var(--accent);
+    color: var(--bg);
+  }
+
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--muted3);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
