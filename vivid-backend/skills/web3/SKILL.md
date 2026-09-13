@@ -77,6 +77,27 @@ not a different kind of app.
 - The deployer is Vivid's wallet for deployments; the user's wallet becomes the owner via
   `transferOwnership` on first admin visit, offered as one button.
 
+## Wallet apps (self-custody, MetaMask-style)
+A wallet holds the user's keys in the browser and signs with them; there is no contract to
+deploy and no deployer involved. The `wallet` design recipe gives the screens; the rules:
+- Keys live only on the device: a 12-word BIP-39 phrase from viem (`generateMnemonic`,
+  `mnemonicToAccount`), encrypted with the user's password (PBKDF2 600k + AES-GCM through
+  WebCrypto) and stored in IndexedDB or localStorage as the keystore; decrypted into memory
+  only while unlocked; wiped on lock, on 15 minutes idle and when the tab is hidden for
+  long. Never send the phrase, the key or the password anywhere; never log them.
+- Show the phrase once on creation behind a Reveal, make the user confirm three words, and
+  offer Reveal again only behind the password. Import accepts a phrase or a private key.
+- Send: validate the address (0x… or ark1…, converted with bech32 both ways, patterns
+  file), estimate gas with `estimateGas` and show the fee, review, then
+  `walletClient.sendTransaction` with the local account; pending, confirmed, explorer link.
+  Insufficient balance is checked against amount plus fee before the review.
+- Balance from `getBalance` every 8 s and after every send; history and token balances from
+  the explorer API (`/api/v2/addresses/{address}/transactions`, `/token-balances`), cached
+  in state, refreshed on Home open and pull-to-refresh.
+- Locked state guards every route but Welcome, Create and Import. A wallet has no /admin.
+- Tell the user in the final reply that this is a devnet wallet, where the faucet is, and
+  that the recovery phrase is the only backup.
+
 ## Definition of done (check before you reply)
 1. Wallet connects, switches to the chain, shows the address and balance, and the site
    still works read-only without a wallet.

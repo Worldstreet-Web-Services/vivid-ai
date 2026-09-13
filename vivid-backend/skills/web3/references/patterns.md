@@ -225,3 +225,102 @@ contract Registry {
 }
 ```
 Hash a file or document in the browser with `crypto.subtle.digest("SHA-256", bytes)` and pass it as `0x…`.
+
+
+## Wallet app patterns
+
+### src/lib/keystore.ts (encrypt the phrase with the password; WebCrypto only)
+```ts
+const enc = new TextEncoder(), dec = new TextDecoder();
+const KEY = "ark-wallet-keystore";
+async function derive(password: string, salt: Uint8Array) {
+  const base = await crypto.subtle.importKey("raw", enc.encode(password), "PBKDF2", false, ["deriveKey"]);
+  return crypto.subtle.deriveKey({ name: "PBKDF2", salt, iterations: 600_000, hash: "SHA-256" }, base,
+    { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
+}
+const b64 = (b: ArrayBuffer | Uint8Array) => btoa(String.fromCharCode(...new Uint8Array(b)));
+const unb64 = (s: string) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+export async function saveKeystore(secret: string, password: string) {          // secret = phrase or 0x key
+  const salt = crypto.getRandomValues(new Uint8Array(16)), iv = crypto.getRandomValues(new Uint8Array(12));
+  const key = await derive(password, salt);
+  const data = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, enc.encode(secret));
+  localStorage.setItem(KEY, JSON.stringify({ v: 1, salt: b64(salt), iv: b64(iv), data: b64(data) }));
+}
+export async function loadKeystore(password: string): Promise<string> {
+  const raw = localStorage.getItem(KEY); if (!raw) throw new Error("No wallet on this device");
+  const { salt, iv, data } = JSON.parse(raw);
+  const key = await derive(password, unb64(salt));
+  try { return dec.decode(await crypto.subtle.decrypt({ name: "AES-GCM", iv: unb64(iv) }, key, unb64(data))); }
+  catch { throw new Error("Wrong password"); }
+}
+export const hasKeystore = () => !!localStorage.getItem(KEY);
+export const removeKeystore = () => localStorage.removeItem(KEY);
+```
+
+### src/lib/account.tsx (the unlocked account in memory only)
+```tsx
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { createWalletClient, http, type Account } from "viem";
+import { english, generateMnemonic, mnemonicToAccount, privateKeyToAccount } from "viem/accounts";
+import { ark } from "./chain";
+import { hasKeystore, loadKeystore, saveKeystore } from "./keystore";
+
+type Ctx = { account?: Account; locked: boolean; exists: boolean;
+  create: (password: string) => Promise<string>; importSecret: (secret: string, password: string) => Promise<void>;
+  unlock: (password: string) => Promise<void>; lock: () => void; reveal: (password: string) => Promise<string> };
+const C = createContext<Ctx | null>(null);
+const fromSecret = (s: string) => (s.trim().startsWith("0x") ? privateKeyToAccount(s.trim() as `0x${string}`) : mnemonicToAccount(s.trim()));
+
+export function AccountProvider({ children }: { children: ReactNode }) {
+  const [account, setAccount] = useState<Account>();
+  const timer = useRef<number>();
+  const lock = () => { setAccount(undefined); };
+  const arm = () => { window.clearTimeout(timer.current); timer.current = window.setTimeout(lock, 15 * 60_000); };
+  useEffect(() => { const on = () => account && arm(); ["click", "keydown", "touchstart"].forEach((e) => window.addEventListener(e, on));
+    const vis = () => { if (document.hidden) timer.current = window.setTimeout(lock, 60_000); else arm(); };
+    document.addEventListener("visibilitychange", vis);
+    return () => { ["click", "keydown", "touchstart"].forEach((e) => window.removeEventListener(e, on)); document.removeEventListener("visibilitychange", vis); }; }, [account]);
+  const value: Ctx = {
+    account, locked: !account, exists: hasKeystore(),
+    create: async (password) => { const m = generateMnemonic(english); await saveKeystore(m, password); setAccount(mnemonicToAccount(m)); arm(); return m; },
+    importSecret: async (secret, password) => { const a = fromSecret(secret); await saveKeystore(secret, password); setAccount(a); arm(); },
+    unlock: async (password) => { setAccount(fromSecret(await loadKeystore(password))); arm(); },
+    lock, reveal: (password) => loadKeystore(password),
+  };
+  return <C.Provider value={value}>{children}</C.Provider>;
+}
+export const useAccount = () => { const v = useContext(C); if (!v) throw new Error("useAccount outside provider"); return v; };
+export const walletFor = (account: Account) => createWalletClient({ account, chain: ark, transport: http() });
+```
+
+### Sending KASH
+```ts
+const wallet = walletFor(account);
+const fee = (await publicClient.estimateGas({ account: account.address, to, value })) * (await publicClient.getGasPrice());
+if (balance < value + fee) throw new Error("Not enough KASH for the amount plus the fee");
+const hash = await wallet.sendTransaction({ to, value });
+const receipt = await publicClient.waitForTransactionReceipt({ hash });
+```
+
+### Addresses: 0x and ark1 are the same key
+```ts
+import { bech32 } from "bech32";                 // npm install bech32
+import { getAddress, isAddress } from "viem";
+export const toArk = (hex: string) => bech32.encode("ark", bech32.toWords(Buffer.from(hex.slice(2), "hex")));
+export const fromArk = (ark: string) => getAddress("0x" + Buffer.from(bech32.fromWords(bech32.decode(ark).words)).toString("hex"));
+export const normalise = (input: string) => input.startsWith("ark1") ? fromArk(input) : isAddress(input) ? getAddress(input) : null;
+```
+`Buffer` needs `import { Buffer } from "buffer"` in the browser (`npm install buffer`) or use
+viem's `hexToBytes` / `bytesToHex` instead of Buffer.
+
+### History and tokens from the explorer
+```ts
+const API = import.meta.env.VITE_CHAIN_EXPLORER.replace("explorer.", "explorer-api.") + "/api/v2";
+export const history = (a: string) => fetch(`${API}/addresses/${a}/transactions`).then((r) => r.json()).then((d) => d.items ?? []);
+export const tokens = (a: string) => fetch(`${API}/addresses/${a}/token-balances`).then((r) => r.json());
+```
+Items carry `hash`, `from.hash`, `to.hash`, `value` (wei as a string), `fee.value`, `status`
+("ok"), `timestamp`, `method`. Direction is `from.hash === address ? "sent" : "received"`.
+
+### QR code
+`npm install qrcode` and `QRCode.toDataURL(address, { margin: 1, width: 240 })` into an `<img>`.

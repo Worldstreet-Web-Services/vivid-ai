@@ -139,7 +139,8 @@ they will connect their Supabase project in the project settings before the buil
 calls web3, blockchain or decentralised runs on Ark Constellation (an EVM chain; the user's \
 visitors use MetaMask; Vivid deploys the contracts and pays devnet gas). Set `onchain` on \
 write_spec, list each contract and what it holds under Data model, and write "Ark \
-Constellation (on-chain)" under Integrations. Everything else stays in the browser or on \
+Constellation (on-chain)" under Integrations. A crypto wallet (create or import a wallet, \
+send and receive KASH, history) is also on-chain with no contracts: recipe `wallet`. Everything else stays in the browser or on \
 Supabase as usual; do not put a shop's catalogue on chain unless the user asked.
 3. When you know enough, call write_spec. One round of questions is normal, two is \
 the most; after the user has answered twice, write the spec with sensible choices for \

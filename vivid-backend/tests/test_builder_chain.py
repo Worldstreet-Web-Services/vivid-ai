@@ -98,3 +98,10 @@ def test_prompt_and_skill_for_onchain_projects():
     assert skills.web3_block(False) == ""
     assert "## Web3 skill" in skills.ui_block("x", "", chain=True)
     assert skills.available() == ["copy", "design", "fullstack", "maps", "motion", "payments", "web3"]
+
+
+def test_wallet_recipe_and_patterns_exist():
+    block = skills.design_block("# Spec\nA crypto wallet", "", recipe="wallet")
+    assert "Recipe: wallet" in block and "/unlock" in block and "no admin area" in block
+    web3 = skills.web3_block(True)
+    assert "## Wallet apps" in web3 and "saveKeystore" in web3 and "PBKDF2" in web3 and "toArk" in web3

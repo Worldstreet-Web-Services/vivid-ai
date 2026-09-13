@@ -29,7 +29,7 @@ def env(monkeypatch):
 def test_recipes_come_from_disk_and_the_block_carries_the_chosen_one():
     assert skills.available() == ["copy", "design", "fullstack", "maps", "motion", "payments", "web3"]
     names = skills.recipe_names()
-    assert names == ["booking", "dashboard", "landing", "platform", "portfolio", "shop"]
+    assert names == ["booking", "dashboard", "landing", "platform", "portfolio", "shop", "wallet"]
     menu = skills.recipe_menu()
     assert "- platform: platform (delivery, logistics" in menu and "- shop: shop" in menu
     block = skills.design_block("# Spec\nSell sneakers online", "", recipe="shop")
