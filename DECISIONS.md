@@ -700,3 +700,23 @@ pins that.
   and Solidity patterns (Token, Collectible, Marketplace escrow, Ballot,
   Registry) with OpenZeppelin. Template gets viem, solc 0.8.36 and
   OpenZeppelin for the next rebuild.
+
+## 19. Wallets, recipes at scale, and the frontend's second round (2026-09-13)
+
+- Wallet recipe and self-custody patterns (keystore with PBKDF2 + AES-GCM,
+  mnemonic via viem, send with fee check, 0x and ark1 addresses via bech32,
+  history from Blockscout, QR). Live proof: Ark Wallet at
+  ark-wallet-54cb11.vivid-apps.pages.dev, built in one turn plus a
+  five-minute repair for a one-word slip; the repair turn's own headless
+  test created, unlocked and read a balance on the devnet.
+- 41 recipes now, one file each; the plan picks by name; every recipe
+  with a hero gets the motion skill; GET /health lists them.
+- Frontend round two: CORS is the deployment's CORS_ORIGINS in app.env
+  (the code default never applies where it is set), so the guide now says
+  so and how to check; GET /keys omits revoked keys unless
+  include_revoked=1; publish refuses an unbuilt project
+  (nothing_to_publish) and records published_at, so "has a URL" and "is
+  live" are different facts.
+- A deploy failed because eth-account was installed locally but not
+  pinned; now in requirements.txt. Rule kept: every new import gets its
+  pin in the same commit.
