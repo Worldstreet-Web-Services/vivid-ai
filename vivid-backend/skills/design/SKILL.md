@@ -72,6 +72,21 @@ on a 390px screen, without zooming.
   at least h-11 on phones.
 - Hover states are subtle (a border or background shift), never a jump in size.
 
+## Roles: customers never see the owner's tools
+- A public site has two audiences. The customer nav and footer carry customer pages only.
+  Anything for the owner (admin, dashboard, stock, orders, bookings list) lives at its own
+  route (/admin) that is not linked from the customer nav; at most a small "Owner sign in"
+  link in the footer.
+- Without a backend, gate /admin with a sign-in screen that checks a PIN or password
+  kept in the code, remember it in localStorage, and tell the user in the final reply that
+  this keeps customers out but is not real security until a backend is linked.
+- With a Supabase backend, the gate is real: Supabase auth for the owner, a `profiles`
+  table with a `role` column, RLS policies so only `role = 'admin'` can write products,
+  orders and bookings, and admin routes that redirect anyone else. Hiding a link is not
+  security; the policies are.
+- The owner's pages look like a tool (dense, tables, forms); the customer's pages look
+  like a shop. Do not mix the two styles.
+
 ## Navigation
 - Header: logo left, up to five links, one primary action right. On phones the links
   collapse into a menu button (use the dropdown-menu component); the primary action stays.
