@@ -152,8 +152,11 @@ async def judge(a: dict, b: dict) -> dict:
     # a judge that answers with empty content must not sink the comparison.
     for slug in dict.fromkeys([settings.DESIGN_JUDGE_MODEL, settings.PLAN_MODEL]):
         ep = provider.openrouter_model(slug, role="judge")
+        # Reasoning models spend their budget thinking before the JSON; give
+        # them room and ask for little of it.
         payload = {"model": ep.model, "messages": [{"role": "user", "content": content}],
-                   "max_tokens": 800, "temperature": 0, **ep.extra_payload}
+                   "max_tokens": 4000, "temperature": 0,
+                   "reasoning": {"effort": "low"}, **ep.extra_payload}
         try:
             r = await http.client().post(ep.url(), json=payload, headers=ep.headers, timeout=180)
             r.raise_for_status()
