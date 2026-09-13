@@ -61,10 +61,16 @@ declare uid uuid := gen_random_uuid();
 begin
   if not exists (select 1 from auth.users where email = 'admin@brand.app') then
     insert into auth.users (id, instance_id, aud, role, email, encrypted_password,
-      email_confirmed_at, raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
+      email_confirmed_at, raw_app_meta_data, raw_user_meta_data, created_at, updated_at,
+      confirmation_token, recovery_token, email_change, email_change_token_new,
+      email_change_token_current, phone_change, phone_change_token, reauthentication_token,
+      is_sso_user, is_anonymous)
     values (uid, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
       'admin@brand.app', crypt('Xk7pQ2mN9vLd', gen_salt('bf')), now(),
-      '{"provider":"email","providers":["email"]}', '{"full_name":"Owner"}', now(), now());
+      '{"provider":"email","providers":["email"]}', '{"full_name":"Owner"}', now(), now(),
+      '', '', '', '', '', '', '', '', false, false);
+    -- The empty strings matter: Supabase auth cannot read NULL token columns and
+    -- sign-in fails with "Database error querying schema" if they are left out.
     insert into auth.identities (id, user_id, provider_id, provider, identity_data,
       last_sign_in_at, created_at, updated_at)
     values (gen_random_uuid(), uid, uid::text, 'email',
@@ -74,7 +80,9 @@ end $$;
 update public.profiles set role = 'admin'
   where id = (select id from auth.users where email = 'admin@brand.app');
 ```
-The profile row exists because `handle_new_user` fired on the insert. Use the spec's brand
+The profile row exists because `handle_new_user` fired on the insert. To check the account
+without changing anything use `query_database` (`select email, email_confirmed_at from
+auth.users`), never a migration. Use the spec's brand
 slug in the email and a fresh random password; both go in `supabase/README.md` and the final reply.
 
 ## src/lib/errors.ts

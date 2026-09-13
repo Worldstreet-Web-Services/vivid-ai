@@ -79,6 +79,12 @@ SUPABASE_SCHEMAS: list[dict] = [
         {"name": {"type": "string", "description": "e.g. create_bookings"},
          "sql": {"type": "string", "description": "The SQL to run."}},
         ["name", "sql"]),
+    _fn("query_database",
+        "Run one read-only SQL query (select only) against the project's database "
+        "and see up to 50 rows. For checking data, schema or an account; never "
+        "for changes, which go through apply_migration.",
+        {"sql": {"type": "string", "description": "A single SELECT."}},
+        ["sql"]),
     _fn("deploy_edge_function",
         "Deploy a Supabase Edge Function (Deno, TypeScript) under the given "
         "name; the code is index.ts and must export a Deno.serve handler. "
@@ -285,6 +291,37 @@ async def _apply_migration(args: dict, backend: Backend) -> Outcome:
     return Outcome(f"Migration {name} applied.")
 
 
+_SELECT = re.compile(r"^\s*(with\b[\s\S]*?\bselect\b|select\b)", re.I)
+_UNSAFE = re.compile(r"\b(insert|update|delete|drop|alter|create|truncate|grant|revoke)\b", re.I)
+
+
+def _rows_text(rows: list[dict]) -> str:
+    if not rows:
+        return "No rows."
+    cols = list(rows[0].keys())
+    lines = [" | ".join(cols)]
+    for r in rows[:50]:
+        lines.append(" | ".join(str(r.get(c)) for c in cols))
+    more = f"\n... {len(rows) - 50} more rows" if len(rows) > 50 else ""
+    return "\n".join(lines) + more
+
+
+async def _query_database(args: dict, backend: Backend) -> Outcome:
+    sql = str(args.get("sql") or "").strip().rstrip(";")
+    if not sql or not _SELECT.match(sql) or _UNSAFE.search(sql) or ";" in sql:
+        return Outcome("error: query_database takes one SELECT; changes go through apply_migration")
+    try:
+        if backend.token:
+            rows = await backend.api.query(backend.ref, sql, read_only=True) or []
+        else:
+            from app.builder import pgdirect
+            rows = await pgdirect.query(backend.database_url, sql)
+    except Exception as e:                                     # the text is for the model
+        from app.builder import pgdirect
+        return Outcome(f"error: query failed: {pgdirect.clean_error(e)}")
+    return Outcome(truncate(_rows_text(list(rows))))
+
+
 async def _deploy_edge_function(args: dict, backend: Backend) -> Outcome:
     slug = str(args.get("name") or "").strip()
     code = args.get("code")
@@ -313,6 +350,7 @@ async def _set_secret(args: dict, backend: Backend) -> Outcome:
 
 _SUPABASE_HANDLERS = {
     "apply_migration": _apply_migration,
+    "query_database": _query_database,
     "deploy_edge_function": _deploy_edge_function,
     "set_secret": _set_secret,
 }

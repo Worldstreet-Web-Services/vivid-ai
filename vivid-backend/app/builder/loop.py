@@ -485,6 +485,7 @@ _TOOL_STATUS = {
     "write_file": "Writing the app", "edit_file": "Making the change",
     "run_command": "Installing and running", "get_dev_server_logs": "Checking the dev server",
     "generate_image": "Making pictures", "apply_migration": "Updating the database",
+    "query_database": "Checking the database",
     "deploy_edge_function": "Deploying server code", "set_secret": "Storing a secret",
 }
 

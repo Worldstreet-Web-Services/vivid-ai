@@ -60,7 +60,8 @@ SUPABASE = """## Backend: Supabase (linked to this project)
 - The client is ready: `import { supabase } from "@/lib/supabase"`. It reads \
 VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY from .env, which are already set. \
 Never edit .env and never put a key in code.
-- Schema changes go through apply_migration, one short migration per change. \
+- Schema changes go through apply_migration, one short migration per change. To look at \
+data, the schema or an account use query_database (a SELECT); never a migration for reading. \
 Enable row level security on every table and write policies; without them the \
 anon key can read and write everything.
 - Login and accounts use Supabase auth (supabase.auth.signInWithOtp or password), \

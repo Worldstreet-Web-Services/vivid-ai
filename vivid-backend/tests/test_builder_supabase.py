@@ -119,8 +119,8 @@ async def test_supabase_tools_need_a_backend_and_never_echo_secrets():
     assert out.text.startswith("error: apply_migration needs a Supabase backend")
 
     backend = tools.Backend(ref="refone", token="tok")
-    assert [s["function"]["name"] for s in tools.schemas_for(backend)][-3:] == [
-        "apply_migration", "deploy_edge_function", "set_secret"]
+    assert [s["function"]["name"] for s in tools.schemas_for(backend)][-4:] == [
+        "apply_migration", "query_database", "deploy_edge_function", "set_secret"]
     assert len(tools.schemas_for(None)) == 6
 
     # Database-only backend: migrations over Postgres, the rest withheld.
@@ -137,7 +137,18 @@ async def test_supabase_tools_need_a_backend_and_never_echo_secrets():
     pg.apply_migration = monkeypatch_apply
     try:
         direct = tools.Backend(ref="refone", database_url="postgresql://u:p@h/db")
-        assert [s["function"]["name"] for s in tools.schemas_for(direct)][-1] == "apply_migration"
+        assert [s["function"]["name"] for s in tools.schemas_for(direct)][-2:] == ["apply_migration", "query_database"]
+
+        async def fake_query(dsn, sql, limit=51):
+            assert sql.startswith("select")
+            return [{"email": "admin@x.app", "confirmed": True}]
+        pg.query = fake_query
+        out = await tools.execute("query_database", {"sql": "select email from auth.users"}, sb, direct)
+        assert out.text == "email | confirmed\nadmin@x.app | True"
+        out = await tools.execute("query_database", {"sql": "delete from auth.users"}, sb, direct)
+        assert out.text.startswith("error: query_database takes one SELECT")
+        out = await tools.execute("query_database", {"sql": "select 1; drop table x"}, sb, direct)
+        assert out.text.startswith("error: query_database takes one SELECT")
         assert "deploy_edge_function" not in [s["function"]["name"] for s in tools.schemas_for(direct)]
         out = await tools.execute("apply_migration", {"name": "create_x", "sql": "create table x(id int);"}, sb, direct)
         assert out.text == "Migration create_x applied." and applied[0][2] == "create_x"
