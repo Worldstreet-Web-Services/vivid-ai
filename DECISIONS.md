@@ -544,3 +544,38 @@ Next on the list from this run: re-encode generated pictures as JPEG or
 WebP at write time (needs Pillow), a clearer cap message so the model stops
 asking for pictures, and the fallback should inherit the primary's
 tool-result history instead of re-reading.
+
+### Chopwell round two (2026-09-13, morning)
+
+The user's review of the live site: no way to sign out on desktop, the
+orders page and the post-sign-up screen spinning forever, +234 phone
+numbers rejected, checkout not pre-filled, kitchens sharing covers, 1 MB
+pictures, and "how do riders create an account" (they could not: the plan
+had put rider self-signup out of scope, and a browser app cannot create
+other people's accounts). Changes:
+
+- Generated pictures are re-encoded at write time (Pillow): JPEG at 82 for
+  photos, PNG kept for logos, longest side 1280. Live covers went from
+  1.2 MB to 96 KB.
+- Fullstack skill: other roles join by self sign-up with approval (pending
+  status, "being reviewed" screen, Approve/Reject in /admin under the
+  policies); `AuthProvider.loading` must resolve and a missing profile
+  never blocks the page; every list sets loading false in `finally`;
+  phone formats `0803...` and `+234...` both accepted; checkout pre-filled
+  from the profile and the last address. Design skill: signed-in header is
+  an account dropdown with Sign out, on desktop and phone; nav items are
+  Links or buttons.
+- Google Maps connector (`google_maps`, a browser key verified by one
+  geocoding call), `POST /projects/{id}/maps`, `VITE_GOOGLE_MAPS_KEY`, and
+  a maps skill: Places autocomplete on every address field, distance-based
+  fees with haversine, a map on tracking pages, graceful without a key.
+  Lovable has no such connector; its users paste keys into code.
+- Loop: the fallback model now inherits the primary's conversation (tool
+  calls and results, long results trimmed to 600 chars) plus a handover
+  note, instead of re-reading the project; clean edit turns get one
+  extension of 15 steps. Snapshot take and restore get five minutes.
+- Observed: three handovers in a row where the fallback re-did work and
+  ran out of steps before answering (SwiftDrop, Chopwell build, and both
+  Chopwell repair turns); the inherited conversation is the fix. The
+  laptop's uplink to E2B and OpenRouter was the other cost (resets,
+  timeouts); the server does not have it.
