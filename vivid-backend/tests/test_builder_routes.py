@@ -971,3 +971,68 @@ def test_a_placeholder_name_is_replaced_by_the_spec_title(client, monkeypatch, f
     assert client.get(f"/v1/builder/projects/{pid}").json()["name"] == "Untitled app"
     client.post(f"/v1/builder/projects/{pid}/chat", json={"text": "a salon booking app"})
     assert client.get(f"/v1/builder/projects/{pid}").json()["name"] == "Glow Salon"
+
+
+def test_onchain_projects_get_a_funded_deployer_and_the_deploy_tools(client, monkeypatch, fake_manager):
+    """Turning the chain on (by hand or from the plan) creates a deployer,
+    funds it, puts the chain values in .env and the deploy tools in the
+    model's hands; turning it off removes them."""
+    from cryptography.fernet import Fernet
+    from app.builder import chain as chain_mod
+    monkeypatch.setattr(settings, "SECRETS_ENCRYPTION_KEY", Fernet.generate_key().decode())
+    funded = []
+
+    async def fund(spec, address):
+        funded.append(address)
+        return {"amount": 10, "tx": "ABC"}
+    monkeypatch.setattr(chain_mod, "fund", fund)
+
+    seen = []
+    async def stream_chat(messages, tools, max_tokens=None, endpoint=None, temperature=None):
+        seen.append(([t["function"]["name"] for t in tools], messages[0]["content"]))
+        yield {"type": "token", "text": "ok"}
+        yield {"type": "done", "finish_reason": "stop", "usage": None}
+    monkeypatch.setattr(code_llm, "stream_chat", stream_chat)
+
+    pid = client.post("/v1/builder/projects", json={"skip_plan": True}).json()["id"]
+    r = client.post(f"/v1/builder/projects/{pid}/chain")
+    assert r.status_code == 200 and r.json()["chain"] == "ark-devnet"
+    address = r.json()["deployer_address"]
+    assert chain_mod.is_address(address) and funded == [address]
+    assert client.post(f"/v1/builder/projects/{pid}/chain").json()["deployer_address"] == address   # idempotent
+    client.post(f"/v1/builder/projects/{pid}/chat", json={"text": "make a token"})
+    env = fake_manager.sandbox.files[".env"]
+    assert "VITE_CHAIN_ID=9000\n" in env and f"VITE_DEPLOYER_ADDRESS={address}\n" in env and "KEY" not in env
+    assert "deploy_contract" in seen[-1][0] and "chain_faucet" in seen[-1][0]
+    assert "## Web3 skill" in seen[-1][1] and "## On-chain: Ark Constellation" in seen[-1][1]
+    assert client.post(f"/v1/builder/projects/{pid}/chain/faucet").status_code == 200 and len(funded) == 2
+    r = client.delete(f"/v1/builder/projects/{pid}/chain")
+    assert r.json()["chain"] == "none" and r.json()["deployer_address"] is None
+    client.post(f"/v1/builder/projects/{pid}/chat", json={"text": "more"})
+    assert "deploy_contract" not in seen[-1][0]
+
+
+def test_the_plan_can_turn_the_chain_on(client, monkeypatch, fake_manager):
+    from cryptography.fernet import Fernet
+    from app.builder import chain as chain_mod
+    from tests.test_builder_planning import SPEC
+    monkeypatch.setattr(settings, "SECRETS_ENCRYPTION_KEY", Fernet.generate_key().decode())
+
+    async def fund(spec, address):
+        return {"amount": 10, "tx": "ABC"}
+    monkeypatch.setattr(chain_mod, "fund", fund)
+
+    async def stream_chat(messages, tools, max_tokens=None, endpoint=None, temperature=None):
+        names = [t["function"]["name"] for t in tools]
+        if not names:
+            yield {"type": "token", "text": "## What it is\n**Chop Points** is a loyalty token."}
+        else:
+            yield {"type": "tool_calls", "calls": [
+                {"id": "c1", "name": "write_spec", "error": None,
+                 "arguments": {"markdown": SPEC, "onchain": True, "recipe": "landing"}}]}
+        yield {"type": "done", "finish_reason": "stop", "usage": None}
+    monkeypatch.setattr(code_llm, "stream_chat", stream_chat)
+    pid = client.post("/v1/builder/projects", json={}).json()["id"]
+    client.post(f"/v1/builder/projects/{pid}/chat", json={"text": "a loyalty token dapp"})
+    proj = client.get(f"/v1/builder/projects/{pid}").json()
+    assert proj["chain"] == "ark-devnet" and chain_mod.is_address(proj["deployer_address"])

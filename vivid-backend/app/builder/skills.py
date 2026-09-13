@@ -149,7 +149,11 @@ def maps_block(provider: str | None) -> str:
     return "## Maps skill\n" + text if text else ""
 
 
-_MOTION_RECIPES = {"landing", "platform", "portfolio", "shop"}
+#: Recipes with a marketing face and a hero: they get the motion skill.
+_MOTION_RECIPES = {"landing", "platform", "portfolio", "shop", "restaurant", "event", "real-estate",
+                   "course", "saas", "nonprofit", "fitness", "hotel", "travel", "agency", "marketplace",
+                   "crowdfunding", "membership", "personal", "wedding", "newsletter", "nft-drop",
+                   "token-launch", "dao", "exchange", "ticketing", "magazine", "directory"}
 _MOTION_WORDS = ("animat", "motion", "parallax", "gsap", "framer", "shader", "scroll effect",
                  "transition", "hover effect", "sparkle", "glitter", "grain")
 
@@ -169,9 +173,21 @@ def motion_block(recipe: str | None, user_text: str = "") -> str:
     return "## Motion skill\n" + text + ("\n\n" + patterns if patterns else "")
 
 
+def web3_block(on: bool) -> str:
+    """The web3 skill with its patterns, when the project is on-chain."""
+    if not on or not settings.BUILDER_WEB3_SKILL:
+        return ""
+    text = _read("web3/SKILL.md")
+    if not text:
+        return ""
+    patterns = _read("web3/references/patterns.md")
+    return "## Web3 skill\n" + text + ("\n\n" + patterns if patterns else "")
+
+
 def ui_block(spec_md: str | None, user_text: str = "",
              payments: str | None = None, backend: bool = False,
-             recipe: str | None = None, maps: str | None = None) -> str:
+             recipe: str | None = None, maps: str | None = None,
+             chain: bool = False) -> str:
     """Everything a build or edit turn gets: the design skill with its
     recipe, the copy skill, the app-logic skill when a backend is linked,
     and the payments skill when payments are enabled. The design skill is
@@ -179,7 +195,8 @@ def ui_block(spec_md: str | None, user_text: str = "",
     comes before payments because the payments flow builds on its orders."""
     blocks = (design_block(spec_md, user_text, recipe), copy_block(),
               motion_block(recipe, user_text),
-              fullstack_block(backend), payments_block(payments), maps_block(maps))
+              fullstack_block(backend), payments_block(payments), maps_block(maps),
+              web3_block(chain))
     return "\n\n".join(b for b in blocks if b)
 
 

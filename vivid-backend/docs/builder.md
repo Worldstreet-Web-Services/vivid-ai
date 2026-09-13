@@ -234,6 +234,8 @@ POST /v1/connectors {provider: "paystack", token: "sk_...", public_key: "pk_..."
 POST   /v1/builder/projects/{id}/payments   -> project (payments_provider: paystack)
 DELETE /v1/builder/projects/{id}/payments
 POST   /v1/builder/projects/{id}/maps       -> project (maps_provider: google)
+POST   /v1/builder/projects/{id}/chain      -> project (chain: ark-devnet, deployer_address); DELETE turns it off
+POST   /v1/builder/projects/{id}/chain/faucet
 DELETE /v1/builder/projects/{id}/maps
 ```
 

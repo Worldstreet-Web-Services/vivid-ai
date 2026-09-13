@@ -428,6 +428,8 @@ class Settings(BaseSettings):
     # Motion (GSAP, Framer Motion, parallax, shaders) for pages with a hero
     # and for any request about animation.
     BUILDER_MOTION_SKILL: bool = True
+    # Web3 (wallet, viem, Solidity patterns) for on-chain projects.
+    BUILDER_WEB3_SKILL: bool = True
     # Pageviews accepted per visitor address per project per minute.
     BUILDER_ANALYTICS_PER_MINUTE: int = 60
     # After a build or edit turn that changed UI, screenshot the page at

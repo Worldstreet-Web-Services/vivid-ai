@@ -27,9 +27,19 @@ def env(monkeypatch):
 
 
 def test_recipes_come_from_disk_and_the_block_carries_the_chosen_one():
-    assert skills.available() == ["copy", "design", "fullstack", "maps", "motion", "payments"]
+    assert skills.available() == ["copy", "design", "fullstack", "maps", "motion", "payments", "web3"]
     names = skills.recipe_names()
-    assert names == ["booking", "dashboard", "landing", "platform", "portfolio", "shop"]
+    assert len(names) >= 35 and names == sorted(names)
+    for n in ("booking", "dashboard", "landing", "platform", "portfolio", "shop", "wallet", "restaurant",
+              "event", "real-estate", "course", "job-board", "community", "magazine", "saas", "directory",
+              "nonprofit", "fitness", "hotel", "travel", "clinic", "school", "marketplace", "rental",
+              "crowdfunding", "membership", "agency", "invoicing", "inventory", "social", "support",
+              "survey", "personal", "wedding", "newsletter", "chat-assistant", "nft-drop", "token-launch",
+              "dao", "exchange", "ticketing"):
+        assert n in names, n
+    for r in skills.recipes():
+        text = skills.design_block("x", "", recipe=r["name"])
+        assert f"Recipe: {r['name']}" in text and "Minimums for a first build" in text, r["name"]
     menu = skills.recipe_menu()
     assert "- platform: platform (delivery, logistics" in menu and "- shop: shop" in menu
     block = skills.design_block("# Spec\nSell sneakers online", "", recipe="shop")
@@ -86,7 +96,7 @@ def test_fullstack_skill_only_with_a_backend(monkeypatch):
 
 
 def test_copy_skill_rides_with_the_design_skill():
-    assert skills.available() == ["copy", "design", "fullstack", "maps", "motion", "payments"]
+    assert skills.available() == ["copy", "design", "fullstack", "maps", "motion", "payments", "web3"]
     block = skills.ui_block("# Spec\nA salon booking app", "", recipe="booking")
     assert "## Design skill" in block and "## Copy skill" in block
     assert block.index("## Design skill") < block.index("## Copy skill")

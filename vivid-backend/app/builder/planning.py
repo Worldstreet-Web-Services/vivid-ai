@@ -80,6 +80,13 @@ SCHEMAS = [
                     "description": (
                         "The page recipe closest to this app, by name from the list in "
                         "the instructions; omit when none fits.")},
+                "onchain": {
+                    "type": "boolean",
+                    "description": (
+                        "true only when the user asked for a dApp, web3, blockchain, "
+                        "on-chain, a token, an NFT, a smart contract or decentralised "
+                        "logic. Then the app runs on Ark Constellation, the only chain "
+                        "Vivid deploys to. Default false.")},
                 "fullstack": {
                     "type": "boolean",
                     "description": (
@@ -128,6 +135,13 @@ riders, senders and a dispatcher each see their own jobs cannot be a site). If t
 sits on the line, ask. Full-stack is the `fullstack` flag on write_spec; its spec says \
 "Supabase (accounts, data)" under Integrations, and your closing sentence tells the user \
 they will connect their Supabase project in the project settings before the build.
+   On-chain: a dApp, token, NFT, marketplace with escrow, DAO vote, or anything the user \
+calls web3, blockchain or decentralised runs on Ark Constellation (an EVM chain; the user's \
+visitors use MetaMask; Vivid deploys the contracts and pays devnet gas). Set `onchain` on \
+write_spec, list each contract and what it holds under Data model, and write "Ark \
+Constellation (on-chain)" under Integrations. A crypto wallet (create or import a wallet, \
+send and receive KASH, history) is also on-chain with no contracts: recipe `wallet`. Everything else stays in the browser or on \
+Supabase as usual; do not put a shop's catalogue on chain unless the user asked.
 3. When you know enough, call write_spec. One round of questions is normal, two is \
 the most; after the user has answered twice, write the spec with sensible choices for \
 anything still open rather than asking again. \
@@ -158,6 +172,7 @@ class PlanResult:
     spec_md: str | None = None
     questions: list[dict] | None = None
     fullstack: bool = False
+    onchain: bool = False
     recipe: str | None = None
     #: The expanded brief from the first turn's meta-prompt.
     brief_md: str | None = None
@@ -172,18 +187,21 @@ def name_from_spec(spec_md: str | None, brief_md: str | None = None) -> str | No
     """The app's name as the plan wrote it: the spec's H1 up to a dash or
     colon ("# Ọ̀nà Studio — online store" -> "Ọ̀nà Studio"), else the
     first bold or capitalised name in the brief's opening line."""
-    for text in (spec_md, brief_md):
+    for text, headings in ((spec_md, True), (brief_md, False)):
         if not text:
             continue
         for line in text.splitlines():
             line = line.strip()
-            if line.startswith("#"):
-                title = line.lstrip("#").strip()
-                if title.lower().startswith(("what it is", "who it is for", "spec")):
-                    continue
-                name = _TITLE_SPLIT.split(title, 1)[0].strip(" .,'\"")
-                if 2 <= len(name) <= 60:
-                    return name
+            if not headings or not line.startswith("#"):
+                continue
+            # The spec's title names the app; the brief's headings are
+            # section names ("Pages and flows"), never the brand.
+            title = line.lstrip("#").strip()
+            if title.lower().startswith(("what it is", "who it is for", "spec")):
+                continue
+            name = _TITLE_SPLIT.split(title, 1)[0].strip(" .,'\"")
+            if 2 <= len(name) <= 60:
+                return name
         m = re.search(r"\*\*([^*]{2,60})\*\*", text)
         if m:
             return m.group(1).strip()
@@ -401,6 +419,7 @@ class PlanRunner:
             self.result.fullstack = bool(args.get("fullstack", False))
             recipe = str(args.get("recipe") or "").strip().lower()
             self.result.recipe = recipe if recipe in skills.recipe_names() else None
+            self.result.onchain = bool(args.get("onchain", False))
             self.result.reason = SPEC_WRITTEN
             return "Spec saved. Tell the user what it covers in one or two sentences.", False
         return f"error: no tool named {call['name']!r} in plan mode.", False

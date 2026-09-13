@@ -277,6 +277,10 @@ class BuilderProject(Base):
     maps_provider: Mapped[str] = mapped_column(String(16), default="none")
     #: Storage key of the latest desktop screenshot (the project card).
     thumbnail_key: Mapped[str | None] = mapped_column(String(512), default=None)
+    #: "ark-devnet" when the app is a dApp; the deployer key is a secret,
+    #: its address is public.
+    chain: Mapped[str] = mapped_column(String(16), default="none")
+    deployer_address: Mapped[str | None] = mapped_column(String(64), default=None)
     # Accounts, roles and server-side data are built only when asked for:
     # set by the plan (write_spec) or the client, never assumed.
     fullstack: Mapped[bool] = mapped_column(Boolean, default=False)

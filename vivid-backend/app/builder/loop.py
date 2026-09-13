@@ -147,6 +147,11 @@ now, in this turn. Do not shorten anything. When it is complete, reply to the us
 two sentences about what the app now contains."""
 #: Added to the completeness brief when the project has a Supabase backend:
 #: the app-logic skill's definition of done, checked, not assumed.
+CHAIN_BRIEF = """ This project is on-chain, so also check: every contract the spec needs is deployed \
+with deploy_contract and imported from src/lib/contracts (no hard-coded addresses elsewhere); \
+the app connects a wallet, switches it to the chain, shows the balance and a faucet link when \
+it is zero, and every transaction shows a pending state and an explorer link; the deployer key \
+is nowhere in src/ or .env."""
 FULLSTACK_BRIEF = """ This project has a Supabase backend, so also check the app-logic skill's \
 definition of done: sign-up, sign-in, sign-out and password reset exist and the session \
 survives a reload; a new customer can do the main thing end to end and see it in their \
@@ -230,7 +235,8 @@ class TurnRunner:
                  fullstack: bool = False,
                  backend_env: bool = False,
                  recipe: str | None = None,
-                 maps: str | None = None) -> None:
+                 maps: str | None = None,
+                 chain: "tools.Chain | None" = None) -> None:
         self.sandbox = sandbox
         self.backend = backend
         #: The app has a Supabase client (keys pasted) but this turn has no
@@ -240,6 +246,9 @@ class TurnRunner:
         self.recipe = recipe
         #: "google" when the project has a Maps key; adds the maps skill.
         self.maps = maps
+        #: The chain and deployer when the project is on-chain; adds the
+        #: deploy tools and the web3 skill.
+        self.chain = chain
         #: The previous attempt's conversation, handed to the next model.
         self._carry: list[dict] = []
         self._live: tuple[list[dict], int] | None = None
@@ -338,9 +347,11 @@ class TurnRunner:
                          skill_block=skills.ui_block(self.spec_md, self.user_text,
                                                     payments=self.payments,
                                                     backend=self._app_logic,
-                                                    recipe=self.recipe, maps=self.maps),
+                                                    recipe=self.recipe, maps=self.maps,
+                                                    chain=self.chain is not None),
                          fullstack=self.fullstack, backend_env=self.backend_env,
-                         functions=self.backend is None or self.backend.can_functions)}]
+                         functions=self.backend is None or self.backend.can_functions,
+                         chain=self.chain)}]
         messages += self.history
         messages.append({"role": "user", "content": self.user_text})
         if self._carry:
@@ -414,7 +425,7 @@ class TurnRunner:
             # Once the picture budget is spent the tool goes away: a refused
             # call still costs a step, and the model keeps trying otherwise.
             images = self.images if (self.images is not None and self.images.left > 0) else None
-            call_step = ModelStep(messages, tools.schemas_for(self.backend, images), endpoint)
+            call_step = ModelStep(messages, tools.schemas_for(self.backend, images, self.chain), endpoint)
             async for part in call_step.run():
                 yield part
             if call_step.failed is not None:
@@ -457,7 +468,8 @@ class TurnRunner:
                     yield stream.data("status", {"text": "Checking the app against the spec"})
                     yield stream.data("review", {"kind": "completeness",
                                                  "round": self.result.completion_rounds})
-                    brief = COMPLETION_BRIEF + (FULLSTACK_BRIEF if self._app_logic else "")
+                    brief = COMPLETION_BRIEF + (FULLSTACK_BRIEF if self._app_logic else "") \
+                        + (CHAIN_BRIEF if self.chain is not None else "")
                     messages.append({"role": "user", "content": brief})
                     budget = step + settings.BUILDER_COMPLETION_STEPS
                     review_deadline = budget
@@ -513,7 +525,8 @@ class TurnRunner:
                 yield stream.data("status", {"text": f"Making {len(image_calls)} pictures"})
                 outs = await asyncio.gather(*(
                     tools.execute(c["name"], c["arguments"], self.sandbox, self.backend,
-                                  self.images, typecheck_now=False) for c in image_calls))
+                                  self.images, typecheck_now=False, chain=self.chain)
+                    for c in image_calls))
                 pre = {c["id"]: o for c, o in zip(image_calls, outs)}
                 if self.keepalive is not None:
                     await self.keepalive()
@@ -537,7 +550,7 @@ class TurnRunner:
                     continue
                 outcome = pre.get(call["id"]) or await tools.execute(
                     call["name"], call["arguments"], self.sandbox, self.backend, self.images,
-                    typecheck_now=False)
+                    typecheck_now=False, chain=self.chain)
                 if outcome.touched and outcome.touched not in self.result.touched:
                     self.result.touched.append(outcome.touched)
                 if outcome.touched:
@@ -595,6 +608,7 @@ _TOOL_STATUS = {
     "run_command": "Installing and running", "get_dev_server_logs": "Checking the dev server",
     "generate_image": "Making pictures", "apply_migration": "Updating the database",
     "query_database": "Checking the database",
+    "deploy_contract": "Deploying the contract", "chain_faucet": "Funding the deployer",
     "deploy_edge_function": "Deploying server code", "set_secret": "Storing a secret",
 }
 
