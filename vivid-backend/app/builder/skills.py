@@ -149,7 +149,11 @@ def maps_block(provider: str | None) -> str:
     return "## Maps skill\n" + text if text else ""
 
 
-_MOTION_RECIPES = {"landing", "platform", "portfolio", "shop"}
+#: Recipes with a marketing face and a hero: they get the motion skill.
+_MOTION_RECIPES = {"landing", "platform", "portfolio", "shop", "restaurant", "event", "real-estate",
+                   "course", "saas", "nonprofit", "fitness", "hotel", "travel", "agency", "marketplace",
+                   "crowdfunding", "membership", "personal", "wedding", "newsletter", "nft-drop",
+                   "token-launch", "dao", "exchange", "ticketing", "magazine", "directory"}
 _MOTION_WORDS = ("animat", "motion", "parallax", "gsap", "framer", "shader", "scroll effect",
                  "transition", "hover effect", "sparkle", "glitter", "grain")
 

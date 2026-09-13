@@ -14,3 +14,8 @@ a short form.
 
 Typography carries this recipe: a distinctive heading font, lots of whitespace, muted
 metadata. Dark mode optional but consistent.
+
+Minimums for a first build: at least 8 pieces of work with an image each (uploaded or
+generated in a consistent style), the about page with a portrait and a real bio, a
+contact form that saves or opens mail, every page in the nav, and nothing that says
+placeholder.
