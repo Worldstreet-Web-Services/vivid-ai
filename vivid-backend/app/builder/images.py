@@ -42,6 +42,36 @@ STYLES = {
 }
 
 
+#: Longest side of a stored picture; the model returns 1024 and pages
+#: never show more than that.
+MAX_SIDE = 1280
+JPEG_QUALITY = 82
+
+
+def compress(data: bytes, mime: str, kind: str) -> tuple[bytes, str]:
+    """A megabyte PNG per picture makes a catalogue page crawl on a phone.
+    Photos become JPEG at a quality nobody can tell from the original;
+    logos stay PNG (a flat mark compresses well and keeps its edges) but
+    are capped in size. Anything Pillow cannot read is stored as it came."""
+    try:
+        from PIL import Image
+        import io
+        img = Image.open(io.BytesIO(data))
+        img.load()
+    except Exception:                                      # not an image we know
+        return data, mime
+    if max(img.size) > MAX_SIDE:
+        img.thumbnail((MAX_SIDE, MAX_SIDE))
+    out = io.BytesIO()
+    if kind == "logo":
+        img.save(out, format="PNG", optimize=True)
+        return out.getvalue(), "image/png"
+    if img.mode not in ("RGB", "L"):
+        img = img.convert("RGB")
+    img.save(out, format="JPEG", quality=JPEG_QUALITY, optimize=True, progressive=True)
+    return out.getvalue(), "image/jpeg"
+
+
 class ImageError(Exception):
     """For the model to read: what went wrong, without a vendor name."""
 
@@ -80,6 +110,7 @@ class ImageMaker:
         except media.MediaUnavailable as e:
             self.made.remove(None)
             raise ImageError(f"the image model is unavailable right now ({e.public})")
+        data, mime = compress(data, mime, kind)
         filename = name if "." in name else f"{name}.{'jpg' if 'jpeg' in mime else 'png'}"
         async with async_session() as db:
             asset = await assets.add(db, self.project_id, filename, mime, data)

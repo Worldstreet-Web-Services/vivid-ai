@@ -219,12 +219,12 @@ async def test_generate_image_tool_stores_and_returns_a_path(monkeypatch):
     out = await tools.execute("generate_image", {"prompt": "a red running sneaker, side view",
                                                  "name": "air-zoom-red", "aspect": "square"},
                               sb, None, maker)
-    assert out.text.startswith("Image ready at /uploads/air-zoom-red.png (64x64")
+    assert out.text.startswith("Image ready at /uploads/air-zoom-red.jpg (64x64")
     assert "1 more this turn" in out.text
     assert calls[0][1] == "1:1" and "Photorealistic" in calls[0][0]
-    assert added[0] == ("p1", "air-zoom-red.png", "image/png", len(png(64, 64)))
+    assert added[0][:3] == ("p1", "air-zoom-red.jpg", "image/jpeg")   # photos are re-encoded
     assert ("usage", "model", "images") in added
-    assert sb.blobs["public/uploads/air-zoom-red.png"] == png(64, 64)
+    assert sb.blobs["public/uploads/air-zoom-red.jpg"][:3] == b"\xff\xd8\xff"
 
     await tools.execute("generate_image", {"prompt": "a white court sneaker", "name": "court"}, sb, None, maker)
     out = await tools.execute("generate_image", {"prompt": "one more please", "name": "third"}, sb, None, maker)
@@ -494,3 +494,20 @@ async def test_images_asked_in_one_step_are_made_together(monkeypatch):
     assert sum(t.startswith("Image ready") for t in texts) == 2, texts
     assert sum("images this turn" in t for t in texts) == 1   # the cap held under concurrency
     assert [p["data"]["text"] for p in parts if p["type"] == "data-status"][0] == "Making 3 pictures"
+
+
+def test_compress_makes_photos_jpeg_and_keeps_logos_png():
+    import io
+    from PIL import Image
+    from app.builder import images as images_mod
+    from tests.test_builder_assets import png
+
+    import os
+    noise = Image.frombytes("RGB", (2048, 1536), os.urandom(2048 * 1536 * 3))
+    big = io.BytesIO(); noise.save(big, format="PNG")
+    data, mime = images_mod.compress(big.getvalue(), "image/png", "photo")
+    assert mime == "image/jpeg" and len(data) < len(big.getvalue()) // 4
+    assert Image.open(io.BytesIO(data)).size == (1280, 960)           # capped, ratio kept
+    data, mime = images_mod.compress(png(64, 64), "image/png", "logo")
+    assert mime == "image/png" and data[:4] == b"\x89PNG"
+    assert images_mod.compress(b"not an image", "image/png", "photo") == (b"not an image", "image/png")

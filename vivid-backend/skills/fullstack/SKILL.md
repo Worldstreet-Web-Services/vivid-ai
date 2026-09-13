@@ -38,6 +38,23 @@ Local state is for the UI only; nothing that matters lives in localStorage.
   to where they were going (`state.from`), else to the home page. Sign-in has a
   "Forgot password?" link; reset uses `resetPasswordForEmail` with
   `redirectTo: window.location.origin + "/reset-password"`.
+- Other roles join by self sign-up with approval, never by hand in a dashboard: a
+  "Ride with us" / "List your kitchen" / "Join as staff" form takes the role's details
+  (name, phone, email, password, plus the role's fields: bike plate and areas, or the
+  business name and address) and creates the account with that role and
+  `status = 'pending'`. Pending accounts can sign in and see one screen: "Your application
+  is being reviewed", with what happens next and a contact line. `/admin` lists pending
+  applications first with Approve and Reject buttons; approval is an update the policies
+  allow only for admin, so no server code is needed. Approved accounts land on their
+  dashboard; rejected ones see why. The owner may also change status later (suspend).
+- `AuthProvider.loading` must resolve: it is false as soon as `getSession` returns, and
+  the profile loads separately (`profile` may be null for a moment). A failed or missing
+  profile row never leaves the app on a spinner: show the page, and treat a missing
+  profile as role customer with a one-line "finish your profile" notice. Guard against
+  the sign-up trigger racing the first profile read by retrying that read once after 800 ms.
+- Phone numbers: accept `0803 123 4567`, `08031234567`, `+234 803 123 4567` and
+  `+2348031234567`; normalise to `+234...` before saving, and the validation message shows
+  both accepted forms.
 - Guests can browse; sign-in is asked for at the moment it is needed (checkout, booking,
   saving), with the reason in one line ("Sign in so you can track this order").
 - Every auth error is shown in words a customer understands ("That password is wrong"),
@@ -122,6 +139,13 @@ Local state is for the UI only; nothing that matters lives in localStorage.
 ## Real-world edges
 - Time: store `timestamptz`, display in Africa/Lagos with `Intl.DateTimeFormat`. Booking
   slots are generated from opening hours in the spec, skipping past times and taken slots.
+- Checkout and booking forms are pre-filled from the signed-in profile (name, phone,
+  email) and the last used address; the user edits, never retypes. Saved addresses are a
+  table with a `label` and a "use this" choice at checkout.
+- Every list screen fetches inside `useEffect` with a cancelled flag, sets `loading`
+  false in a `finally`, and shows the friendly error with a retry when the read fails; a
+  page must never spin forever because a query threw, returned nothing, or a filter
+  excluded every row (that is the empty state, not loading).
 - Forms validate on the client (required, formats, minimums) and the database enforces
   the same with `check` constraints. Show the field error under the field.
 - Errors are never shown raw. One helper (`friendlyError(e)` in `src/lib/errors.ts`)
@@ -140,11 +164,14 @@ Local state is for the UI only; nothing that matters lives in localStorage.
 1. Sign up, sign in, sign out, reset password all work, and the session survives reload.
 2. A new customer can do the main thing (order, book, post) end to end and see it in
    their account afterwards.
-3. The owner signs in at the Owner sign-in page, lands in `/admin`, sees that order or
+3. A rider (or partner) can apply through the site, sees the "being reviewed" screen,
+   and the owner approves them from `/admin`; after approval they reach their dashboard.
+4. Sign out works from the header on desktop and phone; the auth spinner never sticks.
+5. The owner signs in at the Owner sign-in page, lands in `/admin`, sees that order or
    booking, and moves it to the next state; the customer's page reflects it.
-4. Signed-out visitors and customers cannot read or change what is not theirs: every
+6. Signed-out visitors and customers cannot read or change what is not theirs: every
    table has RLS with policies, and admin writes fail for a customer (the policies, not
    the UI, stop them).
-5. No `any`, no `service_role` key anywhere in src/, no secret in .env or code.
-6. The final reply tells the user, in plain words, how to sign in as owner and, when a
+7. No `any`, no `service_role` key anywhere in src/, no secret in .env or code.
+8. The final reply tells the user, in plain words, how to sign in as owner and, when a
    webhook or secret is involved, exactly what to add in the third party's dashboard.

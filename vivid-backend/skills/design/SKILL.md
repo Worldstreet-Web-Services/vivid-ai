@@ -104,6 +104,11 @@ on a 390px screen, without zooming.
 ## Navigation
 - Header: logo left, up to five links, one primary action right. On phones the links
   collapse into a menu button (use the dropdown-menu component); the primary action stays.
+- Signed in, the header's right side is an account menu (the dropdown-menu component,
+  trigger = avatar initial or name, `cursor-pointer`): My orders, Account, and Sign out,
+  on desktop and on phones alike. Sign out must be reachable in two taps from any page,
+  and the account page has a plain "Sign out" button as well. A nav item that only looks
+  like a link (a `div` with no `onClick` or `Link`) is a bug; use `Link` or `button`.
 - Footer: business name, contact, hours or address, and the same links. Real details from
   the spec, no lorem ipsum, no "Copyright 2024".
 

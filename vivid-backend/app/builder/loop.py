@@ -105,7 +105,9 @@ FULLSTACK_BRIEF = """ This project has a Supabase backend, so also check the app
 definition of done: sign-up, sign-in, sign-out and password reset exist and the session \
 survives a reload; a new customer can do the main thing end to end and see it in their \
 account; the owner signs in, lands in /admin and can move an order or booking to its next \
-state through the transition function; every table has row level security with policies \
+state through the transition function; other roles named in the spec can apply through the \
+site and be approved from /admin; sign out is in the header on desktop and phone and the auth \
+spinner never sticks; every table has row level security with policies \
 per role; nothing that matters is kept in localStorage; no service key or secret in src/ or \
 .env. Build what is missing with apply_migration (or the migration files when the tools are \
 not available) and the app files, then tell the user how to sign in as the owner."""
