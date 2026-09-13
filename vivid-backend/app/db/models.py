@@ -342,6 +342,24 @@ class BuilderSecret(Base):
         DateTime(timezone=True), default=_now, onupdate=_now)
 
 
+class BuilderPageview(Base):
+    """One visit to a published app, reported by the snippet the publish
+    step puts in the page. No personal data: the visitor id is a daily
+    salted hash, kept only to count unique visitors."""
+    __tablename__ = "builder_pageviews"
+    __table_args__ = (Index("ix_builder_pageviews_project_time", "project_id", "created_at"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    project_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("builder_projects.id", ondelete="CASCADE"), index=True)
+    path: Mapped[str] = mapped_column(String(512))
+    referrer: Mapped[str | None] = mapped_column(String(512), default=None)
+    device: Mapped[str] = mapped_column(String(16), default="desktop")
+    country: Mapped[str | None] = mapped_column(String(2), default=None)
+    visitor: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
 class BuilderPublish(Base):
     __tablename__ = "builder_publishes"
 

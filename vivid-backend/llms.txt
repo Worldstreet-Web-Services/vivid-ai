@@ -31,7 +31,8 @@ Versions    GET/POST /builder/projects/{id}/snapshots · POST .../snapshots/{seq
 Connectors  GET /connectors · POST /connectors · DELETE /connectors/{id} · GET /connectors/supabase/authorize
 Per project POST/DELETE /builder/projects/{id}/supabase · POST/DELETE .../payments · POST/DELETE .../maps
 Publish     POST /builder/projects/{id}/publish · GET .../publishes · GET .../publishes/{publish_id}
-Usage       GET /builder/projects/{id}/usage
+Usage       GET /builder/projects/{id}/usage · GET /builder/projects/{id}/analytics?days=30
+Public      POST /a/{project_id} (pageview reporter used by published sites; no auth)
 Health      GET /health (builder block: models, sandbox, storage, secrets, images, publish, supabase_oauth, skills)
 
 CORS: browsers may call every route directly, including the SSE stream, from
@@ -466,6 +467,22 @@ with that text). 409 busy while a turn or another publish runs. URLs look
 like https://<name>-<id6>.vivid-apps.pages.dev until a custom domain exists.
 
 ------------------------------------------------------------------------
+## 11a. Visitor analytics (published sites)
+
+Every published site carries a small reporter (injected at publish time,
+not in the source) that posts one pageview per route change to
+POST /a/{project_id} as text/plain, with sendBeacon, no cookies. It does
+not report from the sandbox preview or localhost. Visitors are counted by
+a salted daily hash; nothing personal is stored.
+
+GET /builder/projects/{id}/analytics?days=30 ->
+  {days, pageviews, visitors,
+   by_day: [{date: "2026-09-13", pageviews, visitors}],
+   top_pages: [{key: "/", count}], referrers: [{key: "instagram.com"|"direct", count}],
+   devices: [{key: "mobile"|"desktop", count}], countries: [{key: "NG", count}]}
+Show it on the project page under "Visitors": two numbers, a bar per day,
+then the lists. Empty until the site is published and visited.
+
 ## 11. Usage
 
 GET /builder/projects/{id}/usage -> {since, model_calls, tokens, sandbox_seconds, storage_bytes, cost_usd, by_kind}

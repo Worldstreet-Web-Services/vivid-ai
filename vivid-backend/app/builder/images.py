@@ -72,6 +72,33 @@ def compress(data: bytes, mime: str, kind: str) -> tuple[bytes, str]:
     return out.getvalue(), "image/jpeg"
 
 
+FAVICON_LINK = '<link rel="icon" type="image/png" href="/favicon.png" />'
+APPLE_LINK = '<link rel="apple-touch-icon" href="/favicon.png" />'
+
+
+def favicon_bytes(logo_png: bytes, size: int = 256) -> bytes | None:
+    """The logo mark at favicon size; None when Pillow cannot read it."""
+    try:
+        from PIL import Image
+        import io
+        img = Image.open(io.BytesIO(logo_png)); img.load()
+        img.thumbnail((size, size))
+        out = io.BytesIO(); img.save(out, format="PNG", optimize=True)
+        return out.getvalue()
+    except Exception:
+        return None
+
+
+def with_favicon_links(html: str) -> str:
+    """index.html with the favicon links, added once, before </head>."""
+    if 'rel="icon"' in html or "rel='icon'" in html:
+        return html
+    tag = f"    {FAVICON_LINK}\n    {APPLE_LINK}\n"
+    if "</head>" in html:
+        return html.replace("</head>", tag + "  </head>", 1)
+    return tag + html
+
+
 class ImageError(Exception):
     """For the model to read: what went wrong, without a vendor name."""
 
@@ -89,6 +116,24 @@ class ImageMaker:
     def left(self) -> int:
         cap = self.limit if self.limit is not None else settings.BUILDER_IMAGES_PER_TURN
         return cap - len(self.made)
+
+    async def _favicon(self, logo_png: bytes) -> None:
+        """Every site gets a favicon: the mark at 256px as public/favicon.png
+        and the links in index.html. Never fails the picture."""
+        icon = favicon_bytes(logo_png)
+        if icon is None:
+            return
+        try:
+            await self.sandbox.write_bytes("public/favicon.png", icon)
+            try:
+                html = await self.sandbox.read_file("index.html")
+            except FileNotFoundError:
+                return
+            fixed = with_favicon_links(html)
+            if fixed != html:
+                await self.sandbox.write_file("index.html", fixed)
+        except SandboxError as e:
+            log.warning("favicon not written: %s", e)
 
     async def make(self, prompt: str, name: str, aspect: str = "square",
                    kind: str = "photo") -> dict:
@@ -135,6 +180,8 @@ class ImageMaker:
             raise ImageError(f"the image was made but could not be written to the app: {last}")
         self.made.remove(None)
         self.made.append(path)
+        if kind == "logo":
+            await self._favicon(data)
         return {"path": path, "bytes": len(data), "meta": meta or {}}
 
 

@@ -140,7 +140,8 @@ seeded items with names, prices in the spec's currency, short descriptions and a
 lists; every image path used in the code AND in seeded database rows (query the tables that hold \
 image columns) exists in public/uploads (list_files it; generate or repoint any that do \
 not, a broken image is worse than none); forms work end to end (add to \
-cart, book, save); the footer has the real business details; the copy passes the copy \
+cart, book, save); index.html has a real title, description, theme-color and a favicon link \
+with public/favicon.png present; the footer has the real business details; the copy passes the copy \
 skill's checks. list_files and read what you need, then build everything that is missing or thin \
 now, in this turn. Do not shorten anything. When it is complete, reply to the user in one or \
 two sentences about what the app now contains."""

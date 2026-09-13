@@ -532,3 +532,37 @@ def test_motion_skill_for_hero_pages_and_animation_requests(monkeypatch):
     assert ui.index("## Copy skill") < ui.index("## Motion skill")
     monkeypatch.setattr(settings, "BUILDER_MOTION_SKILL", False)
     assert skills.motion_block("platform") == ""
+
+
+async def test_logo_also_becomes_the_favicon(monkeypatch):
+    import io
+    from PIL import Image
+    from app.builder import images as images_mod
+    from app.services.models_gateway import media
+    from tests.test_builder_assets import png
+
+    async def fake_generate(prompt, aspect_ratio="1:1"):
+        return png(512, 512), "image/png"
+    monkeypatch.setattr(media, "generate_image", fake_generate)
+
+    class FakeAsset:
+        def __init__(self, name): self.name, self.meta = name, {"width": 512, "height": 512}
+
+    async def fake_add(db, project_id, filename, mime, data): return FakeAsset(filename)
+
+    class FakeSession:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        def add(self, row): pass
+        async def commit(self): pass
+    monkeypatch.setattr(images_mod.assets, "add", fake_add)
+    monkeypatch.setattr(images_mod, "async_session", lambda: FakeSession())
+
+    sb = FakeSandbox({"index.html": "<html><head><title>x</title></head><body></body></html>"})
+    maker = images_mod.ImageMaker("p1", sb, limit=2)
+    await maker.make("a bolt in a circle", "mark", kind="logo")
+    icon = sb.blobs["public/favicon.png"]
+    assert Image.open(io.BytesIO(icon)).size == (256, 256)
+    assert 'rel="icon"' in sb.files["index.html"] and "apple-touch-icon" in sb.files["index.html"]
+    assert images_mod.with_favicon_links(sb.files["index.html"]) == sb.files["index.html"]   # once
+    assert sb.blobs["public/uploads/mark.png"][:4] == b"\x89PNG"                           # logos stay PNG

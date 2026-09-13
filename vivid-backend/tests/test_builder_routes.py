@@ -923,3 +923,32 @@ def test_turn_outlives_the_connection_and_can_be_reattached(client, monkeypatch,
     msgs = client.get(f"/v1/builder/projects/{pid}/messages").json()
     assert [m["role"] for m in msgs] == ["user", "assistant"]
     assert client.get(f"/v1/builder/projects/{pid}").json()["turn_status"] == "idle"
+
+
+def test_pageviews_are_collected_publicly_and_rolled_up(client, monkeypatch, fake_manager):
+    """A published site posts plain-text pageviews with no auth; the owner
+    reads totals, days, pages, referrers, devices and countries."""
+    from app.api.routes.analytics import router as analytics_router
+    client.app.include_router(analytics_router, prefix="/v1")
+    pid = client.post("/v1/builder/projects", json={"skip_plan": True}).json()["id"]
+
+    def hit(path, ref="", ua="Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)", ip="1.1.1.1", country="NG"):
+        return client.post(f"/v1/a/{pid}", content=json.dumps({"p": path, "r": ref}).encode(),
+                           headers={"content-type": "text/plain", "user-agent": ua,
+                                    "x-forwarded-for": ip, "cf-ipcountry": country})
+    r = hit("/")
+    assert r.status_code == 204 and r.headers["access-control-allow-origin"] == "*"
+    assert client.options(f"/v1/a/{pid}").status_code == 204
+    hit("/shop", ref="https://www.instagram.com/p/abc")
+    hit("/shop", ip="2.2.2.2", ua="Mozilla/5.0 (Macintosh)", country="GH")
+    assert client.post("/v1/a/not-a-project", content=b"{}", headers={"content-type": "text/plain"}).status_code == 204
+    assert client.post(f"/v1/a/{pid}", content=b"not json", headers={"content-type": "text/plain"}).status_code == 204
+
+    a = client.get(f"/v1/builder/projects/{pid}/analytics?days=7").json()
+    assert a["days"] == 7 and a["pageviews"] == 3 and a["visitors"] == 2
+    assert a["top_pages"][0] == {"key": "/shop", "count": 2}
+    assert {"key": "www.instagram.com", "count": 1} in a["referrers"] and {"key": "direct", "count": 2} in a["referrers"]
+    assert a["devices"] == [{"key": "mobile", "count": 2}, {"key": "desktop", "count": 1}]
+    assert a["countries"][0] == {"key": "NG", "count": 2}
+    assert len(a["by_day"]) == 1 and a["by_day"][0]["visitors"] == 2
+    assert client.get(f"/v1/builder/projects/{pid}/analytics").status_code == 200

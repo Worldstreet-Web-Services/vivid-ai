@@ -102,6 +102,17 @@ class UsageOut(BaseModel):
     by_kind: dict
 
 
+class AnalyticsOut(BaseModel):
+    days: int
+    pageviews: int
+    visitors: int
+    by_day: list[dict]
+    top_pages: list[dict]
+    referrers: list[dict]
+    devices: list[dict]
+    countries: list[dict]
+
+
 class SupabaseLinkIn(BaseModel):
     project_ref: str = Field(min_length=5, max_length=64, pattern=r"^[a-z0-9-]+$")
     #: Only for a link without a connector: the project's URL and its

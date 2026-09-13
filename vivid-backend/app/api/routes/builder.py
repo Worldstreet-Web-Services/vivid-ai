@@ -49,7 +49,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
-from app.builder import (assets, blob, images, pgdirect, planning, publish, routing, secrets, skills,
+from app.builder import (analytics, assets, blob, images, pgdirect, planning, publish, routing, secrets, skills,
                          snapshots, stream, supabase, tools, usage)
 from app.builder.loop import FEED_DONE, ModelCall, TurnRunner, turns
 from app.builder.planning import PlanRunner
@@ -62,7 +62,7 @@ from app.db.models import (BuilderAsset, BuilderMessage, BuilderProject, Builder
 from app.services.connectors import supabase as supabase_connector
 from app.services.connectors import tokens as connector_tokens
 from app.db.session import async_session
-from app.schemas.builder import (AssetOut, CancelOut, ChatIn, FileOut, FilesOut, MessageOut,
+from app.schemas.builder import (AnalyticsOut, AssetOut, CancelOut, ChatIn, FileOut, FilesOut, MessageOut,
                                  PreviewOut, ProjectCreate, ProjectOut, ProjectUpdate,
                                  PublishOut, SnapshotOut, SupabaseLinkIn, UsageOut)
 from app.services import rate_limit
@@ -733,7 +733,7 @@ async def _run_publish(project_id: str, publish_id: str, alias: str, redis) -> N
     try:
         await update(status="building")
         sandbox = await _start_sandbox(project_id, redis)
-        site = await publish.build_site(sandbox)
+        site = await publish.build_site(sandbox, project_id)
         await manager.touch(project_id)
         pages = publish.Pages()
         await pages.deploy(site, alias, f"vivid publish {publish_id[:8]}")
@@ -989,6 +989,16 @@ async def restore_snapshot(project_id: str, seq: int, request: Request,
             await manager.kill(project_id, request.app.state.redis)
     await manager.touch(project_id)
     return row
+
+
+@router.get("/projects/{project_id}/analytics", response_model=AnalyticsOut)
+async def project_analytics(project_id: str, days: int = 30,
+                            user: User = Depends(get_current_user),
+                            db: AsyncSession = Depends(get_db)):
+    """Visits to the published app: totals, per day, top pages, referrers,
+    devices and countries, for the last `days` (1 to 365)."""
+    await _owned(project_id, user, db)
+    return AnalyticsOut(**await analytics.rollup(db, project_id, days))
 
 
 @router.get("/projects/{project_id}/usage", response_model=UsageOut)

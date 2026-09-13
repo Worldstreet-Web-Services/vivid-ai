@@ -42,6 +42,34 @@ class PublishError(Exception):
     """What went wrong, in words a user may see."""
 
 
+#: The pageview reporter every published site carries. Plain-text body, so
+#: the browser sends it without a preflight; sendBeacon so it never delays
+#: navigation; SPA route changes are reported by wrapping pushState.
+SNIPPET = """<script>(function(){var u="%s";if(!u||/localhost|e2b\\.app/.test(location.hostname))return;
+var last="";function send(){var p=location.pathname;if(p===last)return;last=p;
+var b=new Blob([JSON.stringify({p:p,r:document.referrer||""})],{type:"text/plain"});
+if(navigator.sendBeacon){navigator.sendBeacon(u,b)}else{fetch(u,{method:"POST",body:b,keepalive:true}).catch(function(){})}}
+var ps=history.pushState;history.pushState=function(){ps.apply(this,arguments);setTimeout(send,0)};
+addEventListener("popstate",send);send()})();</script>"""
+
+
+def analytics_url(project_id: str) -> str:
+    return f"{settings.PUBLIC_BASE_URL.rstrip('/')}/v1/a/{project_id}"
+
+
+def inject_analytics(index_html: bytes, project_id: str) -> bytes:
+    """index.html with the reporter before </head>, once."""
+    html = index_html.decode("utf-8", errors="replace")
+    if "/v1/a/" in html:
+        return index_html
+    tag = SNIPPET % analytics_url(project_id)
+    if "</head>" in html:
+        html = html.replace("</head>", tag + "</head>", 1)
+    else:
+        html = tag + html
+    return html.encode("utf-8")
+
+
 @dataclass
 class BuiltSite:
     files: dict[str, bytes]          # "index.html" -> bytes; no leading slash
@@ -72,7 +100,7 @@ def file_hash(content: bytes, path: str) -> str:
 
 
 # ---------------------------------------------------------------- build
-async def build_site(sandbox: Sandbox) -> BuiltSite:
+async def build_site(sandbox: Sandbox, project_id: str | None = None) -> BuiltSite:
     """`vite build` in the sandbox, dist/ brought back as bytes."""
     result = await sandbox.run("rm -rf dist && npx vite build",
                                timeout=settings.BUILDER_BUILD_TIMEOUT)
@@ -88,6 +116,8 @@ async def build_site(sandbox: Sandbox) -> BuiltSite:
     files = _untar(data)
     if "index.html" not in files:
         raise PublishError("The build produced no index.html.")
+    if project_id:
+        files["index.html"] = inject_analytics(files["index.html"], project_id)
     site = BuiltSite(files)
     if site.size > settings.BUILDER_PUBLISH_MAX_BYTES:
         raise PublishError(f"The built site is {site.size // 1_000_000} MB, over the limit.")

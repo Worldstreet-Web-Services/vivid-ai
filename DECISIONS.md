@@ -621,3 +621,26 @@ backdrop, glitter accents, font loading with alternates, reduced-motion
 and performance rules), attached for landing, platform, portfolio and
 shop recipes or any request that mentions animation; `gsap` and `motion`
 added to the template's package.json for the next template build.
+
+## 17. Motion in depth, favicons, visitor analytics (2026-09-13)
+
+- Motion skill rewritten with a budget (entrances, hover language, one
+  hero effect, one scroll story, ambience, page transitions), exact timing
+  and easing numbers, and `references/patterns.md` with the components to
+  copy: Reveal/RevealGroup/SplitLines, hover presets, NavPill, Parallax,
+  Tilt, Magnetic, useCountUp and a pinned GSAP section, Grain, Glow,
+  Glitter, CursorGlow, a WebGL ShaderBackdrop, PageTransition, a CSS
+  marquee, font loading with alternates. Attached with the design skill
+  for landing, platform, portfolio and shop recipes or any animation ask.
+- Favicon by default: a generated logo is also written as
+  public/favicon.png (256px) and index.html gets the icon links; the design
+  skill asks for title, description, theme-color and Open Graph tags; the
+  completeness review checks them; the template ships a neutral favicon
+  and the links (needs a template rebuild to reach new sandboxes).
+- Visitor analytics: `builder_pageviews` table; `POST /v1/a/{project_id}`
+  public collector (text/plain body so no preflight, ACAO *, sendBeacon,
+  daily salted visitor hash, 60/min per address, ignores unknown projects
+  and bad bodies with 204); the reporter is injected into dist/index.html
+  at publish time, never into the source, and stays quiet on localhost and
+  sandbox previews; `GET /builder/projects/{id}/analytics?days=` rolls up
+  totals, per day, pages, referrers, devices, countries.

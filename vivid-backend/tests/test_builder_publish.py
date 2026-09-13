@@ -146,3 +146,13 @@ async def test_cloudflare_errors_are_publish_errors(monkeypatch):
     monkeypatch.setattr(settings, "CF_API_TOKEN", "")
     with pytest.raises(PublishError, match="not configured"):
         Pages()
+
+
+def test_publish_injects_the_pageview_reporter_once(monkeypatch):
+    from app.builder import publish as pub
+    monkeypatch.setattr(settings, "PUBLIC_BASE_URL", "https://vivid.example")
+    html = b"<!doctype html><html><head><title>x</title></head><body></body></html>"
+    out = pub.inject_analytics(html, "p1")
+    assert b'"https://vivid.example/v1/a/p1"' in out and out.count(b"<script>") == 1
+    assert b"sendBeacon" in out and b"e2b" in out
+    assert pub.inject_analytics(out, "p1") == out          # idempotent
