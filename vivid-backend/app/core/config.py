@@ -417,6 +417,9 @@ class Settings(BaseSettings):
     # desktop and phone widths and let the model critique and fix it.
     BUILDER_DESIGN_CRITIQUE: bool = True
     BUILDER_CRITIQUE_ROUNDS: int = 1
+    # Edit turns get the screenshot critique only when the request is about
+    # looks or at least this many files changed; first builds always do.
+    BUILDER_CRITIQUE_MIN_FILES: int = 3
     # Extra steps the critique may spend beyond BUILDER_MAX_STEPS.
     BUILDER_CRITIQUE_STEPS: int = 6
     BUILDER_SCREENSHOT_TIMEOUT: int = 90

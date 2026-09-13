@@ -346,3 +346,65 @@ def test_intent_detector():
     assert not f("You now have a shop with twelve pairs, a cart and an admin page.")
     assert not f("The delete button works again.")
     assert not f("")
+
+
+async def test_one_typecheck_per_step_and_small_edits_skip_the_critique(monkeypatch):
+    """Three writes in one step: one tsc, its report on the last write's
+    output. A one-file edit gets no screenshot pass; an edit about looks or
+    a three-file edit does. Status parts name the phase."""
+    monkeypatch.setattr(settings, "BUILDER_CRITIQUE_MIN_FILES", 3)
+    captured = []
+
+    async def fake_capture(sandbox, project_id, label, store=True):
+        captured.append(label)
+        return [screenshots.Shot("desktop", 1280, b"D"), screenshots.Shot("mobile", 390, b"M")]
+    monkeypatch.setattr(screenshots, "capture", fake_capture)
+
+    model = ScriptedModel([
+        ("", [call("write_file", {"path": "src/a.ts", "content": "a"}, "c1"),
+              call("write_file", {"path": "src/b.ts", "content": "b"}, "c2"),
+              call("read_file", {"path": "src/App.tsx"}, "c3")]),
+        ("Done.", []),
+    ])
+    monkeypatch.setattr(code_llm, "stream_chat", model.stream_chat)
+    sb = FakeSandbox({"src/App.tsx": "x"})
+    runner = TurnRunner(sb, routing.EDIT, [], "rename two helpers", project_id="p1")
+    parts, c = await collect(runner)
+    tsc_runs = [cmd for cmd in sb.commands if "tsc --noEmit" in cmd]
+    assert len(tsc_runs) == 1
+    outs = {p["toolCallId"]: p["output"] for p in parts if p["type"] == "tool-output-available"}
+    assert outs["c1"] == "Wrote src/a.ts (1 chars)." and "Typecheck: clean" in outs["c2"]
+    assert outs["c3"] == "x"
+    statuses = [p["data"]["text"] for p in parts if p["type"] == "data-status"]
+    assert statuses[:2] == ["Writing the app", "Reading the project"]
+    assert captured == [] and runner.result.critique_rounds == 0   # two files, not about looks
+
+    model = ScriptedModel([("", [call("edit_file", {"path": "src/App.tsx", "old_string": "x", "new_string": "y"})]),
+                           ("Done.", []), ("Looks fine.", [])])
+    monkeypatch.setattr(code_llm, "stream_chat", model.stream_chat)
+    runner = TurnRunner(FakeSandbox({"src/App.tsx": "x"}), routing.EDIT, [], "make the hero colour warmer", project_id="p1")
+    parts, _ = await collect(runner)
+    assert runner.result.critique_rounds == 1 and len(captured) == 1
+    assert "Looking at the page on desktop and phone" in [p["data"]["text"] for p in parts if p["type"] == "data-status"]
+
+    model = ScriptedModel([("", [call("write_file", {"path": f"src/{i}.ts", "content": "z"}, f"c{i}") for i in range(3)]),
+                           ("Done.", []), ("Fine.", [])])
+    monkeypatch.setattr(code_llm, "stream_chat", model.stream_chat)
+    runner = TurnRunner(FakeSandbox({"src/App.tsx": "x"}), routing.EDIT, [], "refactor the helpers", project_id="p1")
+    await collect(runner)
+    assert runner.result.critique_rounds == 1 and len(captured) == 2
+
+
+async def test_typecheck_failure_in_a_step_counts_once(monkeypatch):
+    monkeypatch.setattr(settings, "BUILDER_TYPECHECK_STRIKES", 1)
+    monkeypatch.setattr(settings, "BUILDER_MAX_STEPS", 3)
+    model = ScriptedModel([("", [call("write_file", {"path": "src/a.ts", "content": "a"}, "c1"),
+                                 call("write_file", {"path": "src/b.ts", "content": "b"}, "c2")]),
+                           ("ok", [])])
+    monkeypatch.setattr(code_llm, "stream_chat", model.stream_chat)
+    sb = FakeSandbox({"src/App.tsx": "x"})
+    sb.tsc_output = "src/a.ts(1,1): error TS1005: bad"
+    runner = TurnRunner(sb, routing.EDIT, [], "go", project_id="p1", critique=False)
+    parts, _ = await collect(runner)
+    assert runner.result.typecheck_failures == 1
+    assert runner.result.reason in (loop.TYPECHECK_STRIKES, loop.ANSWERED)

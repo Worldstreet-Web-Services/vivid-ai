@@ -7,6 +7,26 @@
   </head>
   <body>
     <div id="root"></div>
+    <script>
+      // The preview runs inside the Vivid builder's iframe on another origin.
+      // Relay runtime errors to the parent so the builder can show "Fix this".
+      (function () {
+        if (window.parent === window) return;
+        function relay(message, stack) {
+          try {
+            window.parent.postMessage(
+              { type: "vivid:error", message: String(message || "").slice(0, 500), stack: String(stack || "").slice(0, 1500) },
+              "*"
+            );
+          } catch (_) {}
+        }
+        window.addEventListener("error", function (e) { relay(e.message, e.error && e.error.stack); });
+        window.addEventListener("unhandledrejection", function (e) {
+          var r = e.reason || {};
+          relay(r.message || String(r), r.stack);
+        });
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

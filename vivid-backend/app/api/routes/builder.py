@@ -18,6 +18,8 @@
     GET    /builder/projects/{id}/files/{path}
     GET    /builder/projects/{id}/snapshots  one per turn that changed files
     POST   /builder/projects/{id}/snapshots  take one now (after a failed auto-snapshot)
+    POST   /builder/projects/{id}/undo       back to the version before the current one
+    GET    /builder/projects/{id}/logs       the dev server's last lines (for a "something broke" panel)
     POST   /builder/projects/{id}/snapshots/{seq}/restore
     GET    /builder/projects/{id}/usage      this project's metered totals
     POST   /builder/projects/{id}/supabase   link a Supabase project (byo)
@@ -774,6 +776,49 @@ async def take_snapshot(project_id: str, request: Request,
         if row is None:
             raise APIError(409, "nothing_to_snapshot", "Nothing has changed since the template.")
     return row
+
+
+@router.post("/projects/{project_id}/undo", response_model=SnapshotOut)
+async def undo_last_turn(project_id: str, request: Request,
+                         user: User = Depends(get_current_user),
+                         db: AsyncSession = Depends(get_db)):
+    """One click back: restore the version before the current one. Nothing
+    is deleted; the next turn's version continues the sequence, and
+    `restore` can go forward again."""
+    project = await _owned(project_id, user, db)
+    if turns.running(project_id):
+        raise APIError(409, "busy", "Wait for the running turn to finish first.")
+    current = await snapshots.current(db, project)
+    if current is None or current.seq <= 1:
+        raise APIError(409, "nothing_to_undo", "There is no earlier version to go back to.")
+    row = (await db.execute(select(BuilderSnapshot)
+                            .where(BuilderSnapshot.project_id == project_id,
+                                   BuilderSnapshot.seq == current.seq - 1))).scalar_one_or_none()
+    if row is None:
+        raise APIError(409, "nothing_to_undo", "There is no earlier version to go back to.")
+    project.current_snapshot_id = row.id
+    await db.commit()
+    sandbox = manager.peek(project_id)
+    if sandbox is not None:
+        try:
+            await snapshots.restore(sandbox, row)
+        except (snapshots.SnapshotError, SandboxError) as e:
+            log.error("undo into live sandbox for %s failed: %s", project_id, e)
+            await manager.kill(project_id, request.app.state.redis)
+    await manager.touch(project_id)
+    return row
+
+
+@router.get("/projects/{project_id}/logs")
+async def dev_server_logs(project_id: str, request: Request, lines: int = 100,
+                          user: User = Depends(get_current_user),
+                          db: AsyncSession = Depends(get_db)):
+    """The dev server's recent output: what a client shows when the preview
+    is blank or an error overlay is up, next to a "Fix this" button that
+    sends the text as a chat turn."""
+    await _owned(project_id, user, db)
+    sandbox = await _sandbox(project_id, request)
+    return {"lines": (await sandbox.dev_server_logs(max(1, min(lines, 500)))).splitlines()}
 
 
 @router.post("/projects/{project_id}/snapshots/{seq}/restore", response_model=SnapshotOut)

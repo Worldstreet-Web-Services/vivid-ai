@@ -252,6 +252,9 @@ class TurnRunner:
         budget = settings.BUILDER_BUILD_MAX_STEPS if first_build else settings.BUILDER_MAX_STEPS
         completion_left = settings.BUILDER_COMPLETION_ROUNDS if first_build else 0
         critique_left = settings.BUILDER_CRITIQUE_ROUNDS if self.critique else 0
+        # A small edit does not need a screenshot pass; a first build, a
+        # request about looks, or a turn that touched several files does.
+        critique_always = first_build or _about_looks(self.user_text)
         nudges_left = 2
         review_deadline = None
         step = 0
@@ -313,6 +316,7 @@ class TurnRunner:
                     # Content before looks: is the whole spec there?
                     completion_left -= 1
                     self.result.completion_rounds += 1
+                    yield stream.data("status", {"text": "Checking the app against the spec"})
                     yield stream.data("review", {"kind": "completeness",
                                                  "round": self.result.completion_rounds})
                     messages.append({"role": "user", "content": COMPLETION_BRIEF})
@@ -321,10 +325,13 @@ class TurnRunner:
                     if self.keepalive is not None:
                         await self.keepalive()
                     continue
-                if critique_left > 0 and self.result.touched:
+                if critique_left > 0 and self.result.touched and (
+                        critique_always
+                        or len(self.result.touched) >= settings.BUILDER_CRITIQUE_MIN_FILES):
                     # The page is whole: look at it, then keep going with a
                     # few extra steps for the fixes.
                     critique_left -= 1
+                    yield stream.data("status", {"text": "Looking at the page on desktop and phone"})
                     shots = await screenshots.capture(
                         self.sandbox, self.project_id or "project",
                         f"{self.message_id}-r{self.result.critique_rounds + 1}")
@@ -350,29 +357,53 @@ class TurnRunner:
                                              "arguments": json.dumps(c["arguments"])}}
                                for c in calls]})
 
+            # Writes in this step are typechecked once, together, after the
+            # last of them; their outputs are held back until the report
+            # exists so the model reads it next to the file it belongs to.
+            held: list[tuple[dict, tools.Outcome]] = []
+            results: dict[str, str] = {}
+            wrote_kind = None
             for call in calls:
                 if self.cancelled():
                     yield stream.abort("cancelled by the user")
                     self.result.reason = CANCELLED
                     return
                 yield stream.tool_input(call["id"], call["name"], call["arguments"])
+                status = _status_for(call)
+                if status and status != wrote_kind:
+                    wrote_kind = status
+                    yield stream.data("status", {"text": status})
                 if call.get("error"):
                     content = f"error: {call['error']}. Call the tool again with valid JSON."
                     yield stream.tool_error(call["id"], content)
+                    results[call["id"]] = content
+                    continue
+                outcome = await tools.execute(call["name"], call["arguments"],
+                                              self.sandbox, self.backend, self.images,
+                                              typecheck_now=False)
+                if outcome.touched and outcome.touched not in self.result.touched:
+                    self.result.touched.append(outcome.touched)
+                if outcome.touched:
+                    held.append((call, outcome))
                 else:
-                    outcome = await tools.execute(call["name"], call["arguments"],
-                                                  self.sandbox, self.backend, self.images)
-                    content = outcome.text
-                    if outcome.touched and outcome.touched not in self.result.touched:
-                        self.result.touched.append(outcome.touched)
-                    if outcome.typecheck_ok is False:
-                        strikes += 1
-                        self.result.typecheck_failures += 1
-                    elif outcome.typecheck_ok is True:
-                        strikes = 0
-                    yield stream.tool_output(call["id"], content)
+                    yield stream.tool_output(call["id"], outcome.text)
+                    results[call["id"]] = outcome.text
+            if held:
+                ok, report = await tools.typecheck(self.sandbox)
+                if ok:
+                    strikes = 0
+                else:
+                    strikes += 1
+                    self.result.typecheck_failures += 1
+                for i, (call, outcome) in enumerate(held):
+                    text = outcome.text
+                    if i == len(held) - 1:
+                        text = tools.truncate(f"{text}\n{report}")
+                    yield stream.tool_output(call["id"], text)
+                    results[call["id"]] = text
+            for call in calls:
                 messages.append({"role": "tool", "tool_call_id": call["id"],
-                                 "name": call["name"], "content": content})
+                                 "name": call["name"], "content": results.get(call["id"], "")})
             yield stream.finish_step()
             if self.keepalive is not None:
                 try:
@@ -390,6 +421,28 @@ class TurnRunner:
                 and self.result.reason == ANSWERED:
             return
         self.result.reason = STEP_LIMIT
+
+
+#: Plain-English phase lines for a client that wants one sentence.
+_TOOL_STATUS = {
+    "read_file": "Reading the project", "list_files": "Reading the project",
+    "write_file": "Writing the app", "edit_file": "Making the change",
+    "run_command": "Installing and running", "get_dev_server_logs": "Checking the dev server",
+    "generate_image": "Making pictures", "apply_migration": "Updating the database",
+    "deploy_edge_function": "Deploying server code", "set_secret": "Storing a secret",
+}
+
+_LOOKS = re.compile(r"\b(design|look|looks|colou?r|colours|layout|spacing|font|style|styling|"
+                    r"theme|ui|mobile|responsive|hero|padding|margin|align|prettier|beautiful|"
+                    r"premium|logo|image|photo)\b", re.IGNORECASE)
+
+
+def _status_for(call: dict) -> str | None:
+    return _TOOL_STATUS.get(call.get("name", ""))
+
+
+def _about_looks(text: str) -> bool:
+    return bool(_LOOKS.search(text or ""))
 
 
 def _exhausted_message(reason: str) -> str:

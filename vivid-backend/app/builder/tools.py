@@ -187,8 +187,14 @@ def truncate(text: str, limit: int | None = None) -> str:
 
 async def execute(name: str, args: dict, sandbox: Sandbox,
                   backend: Backend | None = None,
-                  images: ImageMaker | None = None) -> Outcome:
-    """Run one tool. Never raises for a problem the model can act on."""
+                  images: ImageMaker | None = None,
+                  typecheck_now: bool = True) -> Outcome:
+    """Run one tool. Never raises for a problem the model can act on.
+
+    `typecheck_now=False` makes write_file and edit_file skip their own
+    typecheck; the loop then runs one check for the whole step and attaches
+    the report to the last write. Same information, one tsc instead of
+    one per file."""
     if name in IMAGE_NAMES:
         if images is None:
             return Outcome("error: image generation is not available on this deployment; "
@@ -213,7 +219,10 @@ async def execute(name: str, args: dict, sandbox: Sandbox,
                        f"{', '.join(sorted(NAMES | (SUPABASE_NAMES if backend else set())))}.")
     handler = _HANDLERS[name]
     try:
-        outcome = await handler(args, sandbox)
+        if name in ("write_file", "edit_file") and not typecheck_now:
+            outcome = await handler(args, sandbox, typecheck_now=False)
+        else:
+            outcome = await handler(args, sandbox)
     except PathError as e:
         outcome = Outcome(f"error: {e}")
     except FileNotFoundError as e:
@@ -299,18 +308,20 @@ async def _read_file(args: dict, sandbox: Sandbox) -> Outcome:
     return Outcome(content)
 
 
-async def _write_file(args: dict, sandbox: Sandbox) -> Outcome:
+async def _write_file(args: dict, sandbox: Sandbox, typecheck_now: bool = True) -> Outcome:
     path = safe_path(str(args.get("path", "")))
     content = args.get("content")
     if not isinstance(content, str):
         return Outcome("error: content must be a string")
     await sandbox.write_file(path, content)
+    if not typecheck_now:
+        return Outcome(f"Wrote {path} ({len(content)} chars).", touched=path)
     ok, report = await typecheck(sandbox)
     return Outcome(f"Wrote {path} ({len(content)} chars).\n{report}",
                    typecheck_ok=ok, touched=path)
 
 
-async def _edit_file(args: dict, sandbox: Sandbox) -> Outcome:
+async def _edit_file(args: dict, sandbox: Sandbox, typecheck_now: bool = True) -> Outcome:
     path = safe_path(str(args.get("path", "")))
     old, new = args.get("old_string"), args.get("new_string")
     if not isinstance(old, str) or not isinstance(new, str):
@@ -326,6 +337,8 @@ async def _edit_file(args: dict, sandbox: Sandbox) -> Outcome:
         return Outcome(f"error: old_string matches {count} places in {path}; include "
                        "more surrounding lines so it matches exactly once.")
     await sandbox.write_file(path, content.replace(old, new, 1))
+    if not typecheck_now:
+        return Outcome(f"Edited {path}.", touched=path)
     ok, report = await typecheck(sandbox)
     return Outcome(f"Edited {path}.\n{report}", typecheck_ok=ok, touched=path)
 

@@ -738,3 +738,23 @@ def test_paystack_connector_and_payments(client, maker, monkeypatch, fake_manage
     assert r.json()["payments_provider"] == "none"
     client.post(f"/v1/builder/projects/{pid}/chat", json={"text": "again"})
     assert "## Payments skill" not in seen[-1] and "VITE_PAYSTACK_PUBLIC_KEY" not in fake_manager.sandbox.files[".env"]
+
+
+def test_undo_and_logs(client, monkeypatch, fake_manager, fake_blob):
+    script(monkeypatch, [
+        ("v1", [{"id": "c1", "name": "write_file", "error": None, "arguments": {"path": "src/App.tsx", "content": "one"}}]),
+        ("done", []),
+        ("v2", [{"id": "c2", "name": "write_file", "error": None, "arguments": {"path": "src/App.tsx", "content": "two"}}]),
+        ("done", []),
+    ])
+    pid = client.post("/v1/builder/projects", json={"skip_plan": True}).json()["id"]
+    assert client.post(f"/v1/builder/projects/{pid}/undo").status_code == 409
+    client.post(f"/v1/builder/projects/{pid}/chat", json={"text": "first"})
+    client.post(f"/v1/builder/projects/{pid}/chat", json={"text": "second"})
+    assert fake_manager.sandbox.files["src/App.tsx"] == "two"
+    r = client.post(f"/v1/builder/projects/{pid}/undo")
+    assert r.status_code == 200 and r.json()["seq"] == 1
+    assert fake_manager.sandbox.files["src/App.tsx"] == "one"
+    assert client.post(f"/v1/builder/projects/{pid}/undo").status_code == 409   # already at 1
+    fake_manager.sandbox.log = "vite ready\nerror: boom\n"
+    assert client.get(f"/v1/builder/projects/{pid}/logs?lines=1").json() == {"lines": ["error: boom"]}

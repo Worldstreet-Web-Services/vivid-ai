@@ -187,6 +187,7 @@ Tool calls (what the agent is doing; show as a compact activity row):
 Data parts (custom events):
   {"type":"data-brief","data":{"markdown":"..."}}                 plan mode, first message: the expanded brief; show as a card the user can read
   {"type":"data-spec","data":{"markdown":"..."}}                  plan mode: the spec was written; offer "Edit spec" and "Build"
+  {"type":"data-status","data":{"text":"Writing the app"}}       one plain sentence per phase: "Reading the project", "Writing the app", "Making pictures", "Checking the app against the spec", "Looking at the page on desktop and phone". Show the latest one as the progress line.
   {"type":"data-notice","data":{"text":"Retrying with a different model.","reason":"step_limit"|"typecheck_strikes"|"stream_retry","attempt"?:n}}
   {"type":"data-review","data":{"kind":"completeness","round":1}}   first builds: "Checking the app against the spec"
   {"type":"data-critique","data":{"round":1,"broken":false,"screenshots":[{"name":"desktop","width":1280,"url":"..."},{"name":"mobile","width":390,"url":"..."}]}}
@@ -271,6 +272,22 @@ GET /builder/projects/{id}/files              -> {files: string[]}
 GET /builder/projects/{id}/files/{path}       -> {path, content}
 For a read-only code viewer (developers). Paths are project-relative.
 
+### Runtime errors from the preview, and "Fix this"
+
+The preview iframe is on another origin, so the client cannot read its
+console. The app template relays errors instead: every uncaught error and
+unhandled promise rejection in the preview is posted to the parent window:
+
+  window.addEventListener("message", (e) => {
+    if (e.data?.type === "vivid:error") show(e.data.message, e.data.stack);
+  });
+
+Show them in a small panel with a "Fix this" button that sends a chat turn:
+"Fix this runtime error: <message>\n<first lines of stack>". The dev
+server's own output (compile errors, Vite overlay text) is at
+GET /builder/projects/{id}/logs?lines=100 -> {lines: string[]}; show it the
+same way when the preview is blank.
+
 ------------------------------------------------------------------------
 ## 7. Uploads (logo, product photos, fonts)
 
@@ -292,6 +309,7 @@ asks about pictures and the user uploads before answering.
 GET  /builder/projects/{id}/snapshots                 -> Snapshot[]  {id, seq, commit_sha, summary, size_bytes, created_at}
 POST /builder/projects/{id}/snapshots                 -> Snapshot    (take one now; rarely needed)
 POST /builder/projects/{id}/snapshots/{seq}/restore   -> Snapshot    (409 busy if a turn runs)
+POST /builder/projects/{id}/undo                      -> Snapshot    one click back to the previous version (409 nothing_to_undo at version 1)
 
 Every changing turn adds a version (data-snapshot on the stream). Restore
 makes an older version current: a live sandbox gets the files at once, so
