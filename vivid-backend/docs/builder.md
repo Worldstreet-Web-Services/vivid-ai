@@ -233,6 +233,8 @@ The user connects their own Paystack account once, as a connector:
 POST /v1/connectors {provider: "paystack", token: "sk_...", public_key: "pk_..."}
 POST   /v1/builder/projects/{id}/payments   -> project (payments_provider: paystack)
 DELETE /v1/builder/projects/{id}/payments
+POST   /v1/builder/projects/{id}/maps       -> project (maps_provider: google)
+DELETE /v1/builder/projects/{id}/maps
 ```
 
 Both keys must be test or both live; the secret is verified against

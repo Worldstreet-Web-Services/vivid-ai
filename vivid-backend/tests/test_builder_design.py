@@ -27,7 +27,7 @@ def env(monkeypatch):
 
 
 def test_recipes_come_from_disk_and_the_block_carries_the_chosen_one():
-    assert skills.available() == ["copy", "design", "fullstack", "payments"]
+    assert skills.available() == ["copy", "design", "fullstack", "maps", "payments"]
     names = skills.recipe_names()
     assert names == ["booking", "dashboard", "landing", "platform", "portfolio", "shop"]
     menu = skills.recipe_menu()
@@ -86,7 +86,7 @@ def test_fullstack_skill_only_with_a_backend(monkeypatch):
 
 
 def test_copy_skill_rides_with_the_design_skill():
-    assert skills.available() == ["copy", "design", "fullstack", "payments"]
+    assert skills.available() == ["copy", "design", "fullstack", "maps", "payments"]
     block = skills.ui_block("# Spec\nA salon booking app", "", recipe="booking")
     assert "## Design skill" in block and "## Copy skill" in block
     assert block.index("## Design skill") < block.index("## Copy skill")
@@ -511,3 +511,13 @@ def test_compress_makes_photos_jpeg_and_keeps_logos_png():
     data, mime = images_mod.compress(png(64, 64), "image/png", "logo")
     assert mime == "image/png" and data[:4] == b"\x89PNG"
     assert images_mod.compress(b"not an image", "image/png", "photo") == (b"not an image", "image/png")
+
+
+def test_maps_skill_only_with_a_key():
+    assert skills.maps_block(None) == "" and skills.maps_block("none") == ""
+    block = skills.maps_block("google")
+    assert block.startswith("## Maps skill\n# Maps with Google") and "PlaceAutocomplete" in block
+    ui = skills.ui_block("# Spec\nA delivery app", "", payments="paystack", backend=True,
+                         recipe="platform", maps="google")
+    assert ui.index("## Payments skill") < ui.index("## Maps skill")
+    assert "## Maps skill" not in skills.ui_block("x", "")

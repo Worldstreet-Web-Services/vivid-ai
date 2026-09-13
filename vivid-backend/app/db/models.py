@@ -273,6 +273,8 @@ class BuilderProject(Base):
     supabase_project_ref: Mapped[str | None] = mapped_column(String(64), default=None)
     #: none | paystack. The user's connector supplies the keys.
     payments_provider: Mapped[str] = mapped_column(String(16), default="none")
+    #: "google" when the project uses the user's Google Maps key.
+    maps_provider: Mapped[str] = mapped_column(String(16), default="none")
     # Accounts, roles and server-side data are built only when asked for:
     # set by the plan (write_spec) or the client, never assumed.
     fullstack: Mapped[bool] = mapped_column(Boolean, default=False)

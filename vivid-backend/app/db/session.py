@@ -51,6 +51,9 @@ async def init_db() -> None:
             "fullstack BOOLEAN NOT NULL DEFAULT FALSE"))
         await conn.execute(text(
             "ALTER TABLE builder_projects ADD COLUMN IF NOT EXISTS recipe VARCHAR(32)"))
+        await conn.execute(text(
+            "ALTER TABLE builder_projects ADD COLUMN IF NOT EXISTS "
+            "maps_provider VARCHAR(16) NOT NULL DEFAULT 'none'"))
 
     async with async_session() as db:
         # Prompts are product config and deploy with the backend: upsert so a

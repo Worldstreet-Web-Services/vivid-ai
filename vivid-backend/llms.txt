@@ -103,6 +103,7 @@ Project:
   backend_mode: "none" | "byo" | "cloud",
   supabase_project_ref: string | null,
   payments_provider: "none" | "paystack",
+  maps_provider: "none" | "google",
   fullstack: boolean,             // accounts + server-side data were asked for (plan sets it)
   recipe: string | null,          // design recipe the plan chose (shop, booking, platform, ...)
   published_url: string | null,
@@ -332,7 +333,7 @@ sequence, nothing is lost. `summary` is the assistant's text for that turn,
 good as the version label.
 
 ------------------------------------------------------------------------
-## 9. Connectors: Supabase (data and auth) and Paystack (payments)
+## 9. Connectors: Supabase (data and auth), Paystack (payments), Google Maps
 
 Connectors belong to the user, not the project; one connection serves all
 their projects.
@@ -370,6 +371,16 @@ With a Supabase backend the model builds a verified checkout (orders table,
 inline checkout, signed webhook). Tell the user, from the model's final
 message, to add the webhook URL in their Paystack dashboard. Without a
 backend the checkout is inline-only.
+
+Google Maps (address autocomplete, maps on tracking pages, distance-based fees):
+  POST /connectors {provider:"google_maps", token:"AIza..."}
+       a browser key with Maps JavaScript, Places and Geocoding enabled; verified by
+       geocoding one address. 422 carries Google's reason when the key is rejected.
+  POST   /builder/projects/{id}/maps   -> Project (maps_provider "google")
+  DELETE /builder/projects/{id}/maps
+The key lands in the app as VITE_GOOGLE_MAPS_KEY and the maps skill rides with
+every turn. Remind the user (the model's final message does too) to restrict the
+key to their site's domain in Google Cloud, since a browser key is public.
 
 ------------------------------------------------------------------------
 ## 10. Publish

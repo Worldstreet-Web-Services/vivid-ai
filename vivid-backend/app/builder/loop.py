@@ -183,7 +183,8 @@ class TurnRunner:
                  payments: str | None = None,
                  fullstack: bool = False,
                  backend_env: bool = False,
-                 recipe: str | None = None) -> None:
+                 recipe: str | None = None,
+                 maps: str | None = None) -> None:
         self.sandbox = sandbox
         self.backend = backend
         #: The app has a Supabase client (keys pasted) but this turn has no
@@ -191,6 +192,8 @@ class TurnRunner:
         self.backend_env = backend_env
         #: The design recipe the plan chose for this project.
         self.recipe = recipe
+        #: "google" when the project has a Maps key; adds the maps skill.
+        self.maps = maps
         #: The user asked for accounts and server-side data (plan or client
         #: set it). Adds the app-logic skill when a backend is linked.
         self.fullstack = fullstack
@@ -275,7 +278,7 @@ class TurnRunner:
                          skill_block=skills.ui_block(self.spec_md, self.user_text,
                                                     payments=self.payments,
                                                     backend=self._app_logic,
-                                                    recipe=self.recipe),
+                                                    recipe=self.recipe, maps=self.maps),
                          fullstack=self.fullstack, backend_env=self.backend_env,
                          functions=self.backend is None or self.backend.can_functions)}]
         messages += self.history

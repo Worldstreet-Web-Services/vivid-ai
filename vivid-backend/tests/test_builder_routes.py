@@ -821,3 +821,53 @@ def test_undo_and_logs(client, monkeypatch, fake_manager, fake_blob):
     assert client.post(f"/v1/builder/projects/{pid}/undo").status_code == 409   # already at 1
     fake_manager.sandbox.log = "vite ready\nerror: boom\n"
     assert client.get(f"/v1/builder/projects/{pid}/logs?lines=1").json() == {"lines": ["error: boom"]}
+
+
+def test_google_maps_connector_and_project_maps(client, monkeypatch, fake_manager):
+    """A Maps key is verified by one geocoding call, stored encrypted, and
+    enabling maps on a project puts it in .env with the skill in the prompt."""
+    import json as _json
+    from cryptography.fernet import Fernet
+    from app.api.routes.connectors import router as connectors_router
+    from app.services.connectors import google_maps
+
+    monkeypatch.setattr(settings, "SECRETS_ENCRYPTION_KEY", Fernet.generate_key().decode())
+    client.app.include_router(connectors_router, prefix="/v1")
+
+    class Resp:
+        def __init__(self, body): self.status_code, self._body = 200, body
+        @property
+        def content(self): return _json.dumps(self._body).encode()
+        def json(self): return self._body
+    answers = {"AIza" + "x" * 35: {"status": "OK", "results": [1]},
+               "AIza" + "d" * 35: {"status": "REQUEST_DENIED", "error_message": "API not enabled"}}
+
+    class FakeHTTP:
+        async def get(self, url, params=None, headers=None, timeout=None):
+            assert url.endswith("/geocode/json") and params["address"].startswith("Lagos")
+            return Resp(answers[params["key"]])
+    monkeypatch.setattr(google_maps.http, "client", lambda: FakeHTTP())
+
+    r = client.post("/v1/connectors", json={"provider": "google_maps", "token": "nope"})
+    assert r.status_code == 422 and "AIza" in r.json()["detail"]
+    r = client.post("/v1/connectors", json={"provider": "google_maps", "token": "AIza" + "d" * 35})
+    assert r.status_code == 422 and "API not enabled" in r.json()["detail"]
+    r = client.post("/v1/connectors", json={"provider": "google_maps", "token": "AIza" + "x" * 35})
+    assert r.status_code == 201 and r.json()["provider"] == "google_maps"
+
+    seen = []
+    async def stream_chat(messages, tools, max_tokens=None, endpoint=None, temperature=None):
+        seen.append(messages[0]["content"])
+        yield {"type": "token", "text": "ok"}
+        yield {"type": "done", "finish_reason": "stop", "usage": None}
+    monkeypatch.setattr(code_llm, "stream_chat", stream_chat)
+
+    pid = client.post("/v1/builder/projects", json={"skip_plan": True}).json()["id"]
+    assert client.get(f"/v1/builder/projects/{pid}").json()["maps_provider"] == "none"
+    r = client.post(f"/v1/builder/projects/{pid}/maps")
+    assert r.status_code == 200 and r.json()["maps_provider"] == "google"
+    client.post(f"/v1/builder/projects/{pid}/chat", json={"text": "add a map"})
+    assert fake_manager.sandbox.files[".env"] == "VITE_GOOGLE_MAPS_KEY=AIza" + "x" * 35 + "\n"
+    assert "## Maps skill" in seen[-1] and "PlaceAutocomplete" in seen[-1]
+    r = client.delete(f"/v1/builder/projects/{pid}/maps")
+    assert r.json()["maps_provider"] == "none"

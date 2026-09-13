@@ -210,6 +210,7 @@ async def chat(project_id: str, body: ChatIn, request: Request,
 
     spec_md, recent = project.spec_md, _recent(project)
     payments = project.payments_provider if project.payments_provider != "none" else None
+    maps = project.maps_provider if project.maps_provider != "none" else None
     if not planning_mode and project.recipe is None and (spec_md or project.brief_md):
         # A project that skipped plan mode still gets a recipe, chosen once.
         project.recipe = await skills.pick_recipe(spec_md or project.brief_md or "")
@@ -250,7 +251,7 @@ async def chat(project_id: str, body: ChatIn, request: Request,
                 return
             runner = TurnRunner(sandbox, stage, history, body.text, spec_md, recent,
                                 cancelled=cancel.is_set, backend=backend,
-                                assets_block=assets_block, payments=payments,
+                                assets_block=assets_block, payments=payments, maps=maps,
                                 fullstack=project.fullstack, recipe=project.recipe,
                                 backend_env=bool(env_vars and "VITE_SUPABASE_URL" in env_vars),
                                 keepalive=lambda: manager.touch(project_id),
@@ -385,6 +386,10 @@ async def _env_for(project: BuilderProject, db: AsyncSession) -> dict[str, str] 
         public = await secrets.get_secret(db, project.id, "PAYSTACK_PUBLIC_KEY")
         if public:
             env["VITE_PAYSTACK_PUBLIC_KEY"] = public
+    if project.maps_provider == "google":
+        key = await secrets.get_secret(db, project.id, "GOOGLE_MAPS_KEY")
+        if key:
+            env["VITE_GOOGLE_MAPS_KEY"] = key
     return env or None
 
 
@@ -514,6 +519,44 @@ async def disable_payments(project_id: str, user: User = Depends(get_current_use
     project = await _owned(project_id, user, db)
     project.payments_provider = "none"
     await secrets.delete_secret(db, project_id, "PAYSTACK_PUBLIC_KEY")
+    await db.commit()
+    return project
+
+
+# ------------------------------------------------------------------ maps
+async def _maps_connector(user_id: str, db: AsyncSession) -> Connector | None:
+    return (await db.execute(
+        select(Connector).where(Connector.user_id == user_id,
+                                Connector.provider == "google_maps"))).scalar_one_or_none()
+
+
+@router.post("/projects/{project_id}/maps", response_model=ProjectOut)
+async def enable_maps(project_id: str, user: User = Depends(get_current_user),
+                      db: AsyncSession = Depends(get_db)):
+    """Address autocomplete, maps and distance with the user's Google Maps
+    key. It is a browser key, so it goes into the app's .env."""
+    project = await _owned(project_id, user, db)
+    if not secrets.configured():
+        raise APIError(503, "not_configured", "Secrets storage is not configured.")
+    connector = await _maps_connector(user.id, db)
+    if connector is None:
+        raise APIError(400, "bad_request", "Connect a Google Maps key first.")
+    await secrets.set_secret(db, project_id, "GOOGLE_MAPS_KEY",
+                             connector_tokens.read(connector.token))
+    project.maps_provider = "google"
+    await db.commit()
+    sandbox = manager.peek(project_id)
+    if sandbox is not None:
+        await _sync_env(sandbox, await _env_for(project, db))
+    return project
+
+
+@router.delete("/projects/{project_id}/maps", response_model=ProjectOut)
+async def disable_maps(project_id: str, user: User = Depends(get_current_user),
+                       db: AsyncSession = Depends(get_db)):
+    project = await _owned(project_id, user, db)
+    project.maps_provider = "none"
+    await secrets.delete_secret(db, project_id, "GOOGLE_MAPS_KEY")
     await db.commit()
     return project
 

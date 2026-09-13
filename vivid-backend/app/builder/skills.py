@@ -141,16 +141,24 @@ def fullstack_block(backend: bool) -> str:
     return "## App logic skill\n" + block
 
 
+def maps_block(provider: str | None) -> str:
+    """The maps skill, when the project has a Google Maps key."""
+    if not provider or provider == "none":
+        return ""
+    text = _read("maps/SKILL.md")
+    return "## Maps skill\n" + text if text else ""
+
+
 def ui_block(spec_md: str | None, user_text: str = "",
              payments: str | None = None, backend: bool = False,
-             recipe: str | None = None) -> str:
+             recipe: str | None = None, maps: str | None = None) -> str:
     """Everything a build or edit turn gets: the design skill with its
     recipe, the copy skill, the app-logic skill when a backend is linked,
     and the payments skill when payments are enabled. The design skill is
     first because the recipe names the sections the copy fills; app logic
     comes before payments because the payments flow builds on its orders."""
     blocks = (design_block(spec_md, user_text, recipe), copy_block(),
-              fullstack_block(backend), payments_block(payments))
+              fullstack_block(backend), payments_block(payments), maps_block(maps))
     return "\n\n".join(b for b in blocks if b)
 
 
