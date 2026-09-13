@@ -446,3 +446,51 @@ async def test_typecheck_failure_in_a_step_counts_once(monkeypatch):
     parts, _ = await collect(runner)
     assert runner.result.typecheck_failures == 1
     assert runner.result.reason in (loop.TYPECHECK_STRIKES, loop.ANSWERED)
+
+
+async def test_images_asked_in_one_step_are_made_together(monkeypatch):
+    """Three pictures in one step take one picture's time, and the cap is
+    honoured even though the calls run concurrently."""
+    import asyncio
+    import time
+    from app.builder import images as images_mod
+    from app.services.models_gateway import media
+    from tests.test_builder_assets import png
+
+    async def fake_generate(prompt, aspect_ratio="1:1"):
+        await asyncio.sleep(0.3)
+        return png(8, 8), "image/png"
+    monkeypatch.setattr(media, "generate_image", fake_generate)
+
+    class FakeAsset:
+        def __init__(self, name): self.name, self.meta = name, {"width": 8, "height": 8}
+
+    async def fake_add(db, project_id, filename, mime, data): return FakeAsset(filename)
+
+    class FakeSession:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        def add(self, row): pass
+        async def commit(self): pass
+    monkeypatch.setattr(images_mod.assets, "add", fake_add)
+    monkeypatch.setattr(images_mod, "async_session", lambda: FakeSession())
+    monkeypatch.setattr(settings, "BUILDER_CRITIQUE_ROUNDS", 0)
+
+    sb = FakeSandbox({"src/App.tsx": "x"})
+    maker = images_mod.ImageMaker("p1", sb, limit=2)
+    model = ScriptedModel([
+        ("Pictures first.", [call("generate_image", {"prompt": "a red sneaker on a grey surface", "name": "one"}, "c1"),
+                             call("generate_image", {"prompt": "a white sneaker on a grey surface", "name": "two"}, "c2"),
+                             call("generate_image", {"prompt": "a blue sneaker on a grey surface", "name": "three"}, "c3")]),
+        ("Done.", []),
+    ])
+    monkeypatch.setattr(code_llm, "stream_chat", model.stream_chat)
+    runner = TurnRunner(sb, routing.EDIT, [], "pictures", images=maker)
+    t = time.monotonic()
+    parts, c = await collect(runner)
+    assert time.monotonic() - t < 0.8                          # concurrent, not 0.9 s serial
+    outs = [p for p in c.parts if p["type"] == "tool-generate_image"]
+    texts = [p.get("output") or p.get("errorText") or "" for p in outs]
+    assert sum(t.startswith("Image ready") for t in texts) == 2, texts
+    assert sum("images this turn" in t for t in texts) == 1   # the cap held under concurrency
+    assert [p["data"]["text"] for p in parts if p["type"] == "data-status"][0] == "Making 3 pictures"

@@ -65,13 +65,18 @@ class ImageMaker:
         if self.left <= 0:
             raise ImageError(f"you have made {len(self.made)} images this turn, the most "
                              "allowed; reuse them or continue next turn")
+        # Calls in one step run concurrently: hold the slot now, give it
+        # back if the picture never lands.
+        self.made.append(None)
         ratio = "1:1" if kind == "logo" else ASPECTS.get(aspect, "1:1")
         styled = f"{prompt.strip()}. {STYLES.get(kind, STYLES['photo'])}"
         try:
             data, mime = await media.generate_image(styled, aspect_ratio=ratio)
         except media.MediaRejected as e:
+            self.made.remove(None)
             raise ImageError(f"the image model refused that prompt: {e.public}")
         except media.MediaUnavailable as e:
+            self.made.remove(None)
             raise ImageError(f"the image model is unavailable right now ({e.public})")
         filename = name if "." in name else f"{name}.{'jpg' if 'jpeg' in mime else 'png'}"
         async with async_session() as db:
@@ -93,7 +98,9 @@ class ImageMaker:
                 last = e
                 await asyncio.sleep(1.5 * (attempt + 1))
         if last is not None:
+            self.made.remove(None)
             raise ImageError(f"the image was made but could not be written to the app: {last}")
+        self.made.remove(None)
         self.made.append(path)
         return {"path": path, "bytes": len(data), "meta": meta or {}}
 

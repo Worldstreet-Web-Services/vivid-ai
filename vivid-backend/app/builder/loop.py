@@ -407,6 +407,18 @@ class TurnRunner:
             held: list[tuple[dict, tools.Outcome]] = []
             results: dict[str, str] = {}
             wrote_kind = None
+            # Pictures take a minute each and do not touch the code: a step
+            # that asks for several gets them all at once.
+            pre: dict[str, tools.Outcome] = {}
+            image_calls = [c for c in calls if c["name"] == "generate_image" and not c.get("error")]
+            if len(image_calls) > 1:
+                yield stream.data("status", {"text": f"Making {len(image_calls)} pictures"})
+                outs = await asyncio.gather(*(
+                    tools.execute(c["name"], c["arguments"], self.sandbox, self.backend,
+                                  self.images, typecheck_now=False) for c in image_calls))
+                pre = {c["id"]: o for c, o in zip(image_calls, outs)}
+                if self.keepalive is not None:
+                    await self.keepalive()
             for call in calls:
                 if self.cancelled():
                     yield stream.abort("cancelled by the user")
@@ -422,9 +434,9 @@ class TurnRunner:
                     yield stream.tool_error(call["id"], content)
                     results[call["id"]] = content
                     continue
-                outcome = await tools.execute(call["name"], call["arguments"],
-                                              self.sandbox, self.backend, self.images,
-                                              typecheck_now=False)
+                outcome = pre.get(call["id"]) or await tools.execute(
+                    call["name"], call["arguments"], self.sandbox, self.backend, self.images,
+                    typecheck_now=False)
                 if outcome.touched and outcome.touched not in self.result.touched:
                     self.result.touched.append(outcome.touched)
                 if outcome.touched:
