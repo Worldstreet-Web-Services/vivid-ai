@@ -151,7 +151,10 @@ Project:
 
 `skip_plan: true` creates the project in build mode (for developers who
 know what they want). Non-technical users should always go through plan
-mode.
+mode. Names: you may create a project with no name; the plan replaces a
+placeholder ("Untitled app", "New project", empty) with the app's own name
+from the spec, and the published URL slug follows it. A name the user typed
+is kept.
 
 ------------------------------------------------------------------------
 ## 3. The chat turn (the core of the UI)
@@ -498,6 +501,14 @@ preview iframe right with a phone/desktop toggle (the iframe is the app; set
 width 390 for phone), a small "Versions" list, an "Upload files" button, a
 "Publish" button with the live link, and "Connect Supabase" / "Connect
 Paystack" in project settings. Show tool activity collapsed.
+
+Project page, after publish: a "Visitors" panel from
+GET /builder/projects/{id}/analytics (section 11a): two big numbers
+(visitors, pageviews for the period), a bar per day, then top pages,
+referrers, devices and countries; a period switch for 7, 30 and 90 days.
+The projects grid uses Project.thumbnail_url for the card image and
+Project.name, which the plan sets from the app's own name once the spec
+is written (create with no name, or any placeholder, and it fills in).
 
 Developer flow adds: skip plan on create, the file viewer, the spec as an
 editable text area, the raw activity log, the usage panel.

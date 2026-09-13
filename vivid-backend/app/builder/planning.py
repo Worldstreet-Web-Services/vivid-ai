@@ -12,6 +12,7 @@ out of scope. Small, so the build model reads it every step for nothing.
 """
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import AsyncIterator, Callable
 
@@ -161,6 +162,43 @@ class PlanResult:
     #: The expanded brief from the first turn's meta-prompt.
     brief_md: str | None = None
     calls: list = field(default_factory=list)
+
+
+DEFAULT_NAMES = {"", "untitled app", "untitled", "new project", "smoke", "my app"}
+_TITLE_SPLIT = re.compile(r"\s*(?:—|–|:|\|)\s+|\s+-\s+")
+
+
+def name_from_spec(spec_md: str | None, brief_md: str | None = None) -> str | None:
+    """The app's name as the plan wrote it: the spec's H1 up to a dash or
+    colon ("# Ọ̀nà Studio — online store" -> "Ọ̀nà Studio"), else the
+    first bold or capitalised name in the brief's opening line."""
+    for text in (spec_md, brief_md):
+        if not text:
+            continue
+        for line in text.splitlines():
+            line = line.strip()
+            if line.startswith("#"):
+                title = line.lstrip("#").strip()
+                if title.lower().startswith(("what it is", "who it is for", "spec")):
+                    continue
+                name = _TITLE_SPLIT.split(title, 1)[0].strip(" .,'\"")
+                if 2 <= len(name) <= 60:
+                    return name
+        m = re.search(r"\*\*([^*]{2,60})\*\*", text)
+        if m:
+            return m.group(1).strip()
+        for line in text.splitlines():
+            if line.lstrip().startswith("#"):
+                continue
+            m = re.match(r"\s*([A-Z][\w'’]*(?:\s+[A-Z][\w'’]*){0,3})\s+is\b", line)
+            if m:
+                return m.group(1).strip()
+    return None
+
+
+def auto_named(name: str | None) -> bool:
+    """True when the project still carries a placeholder name the plan may replace."""
+    return (name or "").strip().lower() in DEFAULT_NAMES
 
 
 def validate_questions(raw) -> tuple[list[dict] | None, str | None]:

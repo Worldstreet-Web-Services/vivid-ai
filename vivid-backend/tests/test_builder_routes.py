@@ -407,6 +407,7 @@ def test_plan_mode_then_build(client, monkeypatch, fake_manager):
     assert any(isinstance(p, dict) and p["type"] == "data-spec" for p in parts)
     proj = client.get(f"/v1/builder/projects/{pid}").json()
     assert proj["mode"] == "plan" and proj["spec_md"] == SPEC.strip()
+    assert proj["name"] == "Salon"                              # a typed name is kept
     assert proj["fullstack"] is True                            # the plan asked for accounts
     assert proj["recipe"] == "booking"
     assert client.patch(f"/v1/builder/projects/{pid}", json={"fullstack": False}).json()["fullstack"] is False
@@ -952,3 +953,21 @@ def test_pageviews_are_collected_publicly_and_rolled_up(client, monkeypatch, fak
     assert a["countries"][0] == {"key": "NG", "count": 2}
     assert len(a["by_day"]) == 1 and a["by_day"][0]["visitors"] == 2
     assert client.get(f"/v1/builder/projects/{pid}/analytics").status_code == 200
+
+
+def test_a_placeholder_name_is_replaced_by_the_spec_title(client, monkeypatch, fake_manager):
+    from tests.test_builder_planning import SPEC
+    async def stream_chat(messages, tools, max_tokens=None, endpoint=None, temperature=None):
+        names = [t["function"]["name"] for t in tools]
+        if not names:
+            yield {"type": "token", "text": "## What it is\n**Glow Salon** is a booking app."}
+        else:
+            yield {"type": "tool_calls", "calls": [
+                {"id": "c1", "name": "write_spec", "error": None,
+                 "arguments": {"markdown": "# Glow Salon — bookings\n" + SPEC.split("\n", 1)[1]}}]}
+        yield {"type": "done", "finish_reason": "stop", "usage": None}
+    monkeypatch.setattr(code_llm, "stream_chat", stream_chat)
+    pid = client.post("/v1/builder/projects", json={}).json()["id"]
+    assert client.get(f"/v1/builder/projects/{pid}").json()["name"] == "Untitled app"
+    client.post(f"/v1/builder/projects/{pid}/chat", json={"text": "a salon booking app"})
+    assert client.get(f"/v1/builder/projects/{pid}").json()["name"] == "Glow Salon"

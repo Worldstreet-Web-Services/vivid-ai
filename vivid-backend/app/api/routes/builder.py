@@ -390,6 +390,13 @@ async def _persist_plan_turn(project_id: str, collector: stream.PartsCollector,
                 project.recipe = runner.result.recipe
             if runner.result.brief_md:
                 project.brief_md = runner.result.brief_md
+            if planning.auto_named(project.name):
+                # The plan knows the app's name; a placeholder gives way to it
+                # (and the publish alias follows the name).
+                name = planning.name_from_spec(runner.result.spec_md or project.spec_md,
+                                               runner.result.brief_md or project.brief_md)
+                if name:
+                    project.name = name
             await usage.record_model(db, project_id, [
                 ModelCall(model, routing.PLAN, u) for model, u in runner.result.calls])
             await db.commit()
