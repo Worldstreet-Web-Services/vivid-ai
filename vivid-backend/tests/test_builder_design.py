@@ -27,7 +27,7 @@ def env(monkeypatch):
 
 
 def test_recipe_routing_and_block():
-    assert skills.available() == ["copy", "design", "payments"]
+    assert skills.available() == ["copy", "design", "fullstack", "payments"]
     assert skills.recipe_for("an ecommerce website for my sneakers") == "shop"
     assert skills.recipe_for("a booking app for my salon") == "booking"
     assert skills.recipe_for("landing page for a bakery") == "landing"
@@ -47,8 +47,23 @@ def test_skill_can_be_turned_off(monkeypatch):
     assert skills.copy_block() == "" and skills.ui_block("shop", "") == ""
 
 
+def test_fullstack_skill_only_with_a_backend(monkeypatch):
+    assert skills.fullstack_block(False) == ""
+    block = skills.fullstack_block(True)
+    assert block.startswith("## App logic skill\n# App logic on Supabase")
+    assert "handle_new_user" in block and "advance_order" in block       # patterns ride along
+    assert "Definition of done" in block and "name: fullstack" not in block
+    ui = skills.ui_block("# Spec\nSell sneakers online", "", payments="paystack", backend=True)
+    order = [ui.index(h) for h in ("## Design skill", "## Copy skill",
+                                   "## App logic skill", "## Payments skill")]
+    assert order == sorted(order)
+    assert "## App logic skill" not in skills.ui_block("shop", "", backend=False)
+    monkeypatch.setattr(settings, "BUILDER_FULLSTACK_SKILL", False)
+    assert skills.fullstack_block(True) == ""
+
+
 def test_copy_skill_rides_with_the_design_skill():
-    assert skills.available() == ["copy", "design", "payments"]
+    assert skills.available() == ["copy", "design", "fullstack", "payments"]
     block = skills.ui_block("# Spec\nA salon booking app", "")
     assert "## Design skill" in block and "## Copy skill" in block
     assert block.index("## Design skill") < block.index("## Copy skill")

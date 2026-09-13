@@ -132,6 +132,19 @@ desktop, without the user knowing any of it exists:
   context. Attached with the design skill to every UI turn.
   `BUILDER_COPY_SKILL` turns it off. Adapted from boraoztunc/skills and
   stop-slop; see `skills/copy/NOTICE.md`.
+- **The app-logic skill** (`skills/fullstack/`): attached to every turn of a
+  project that has Supabase linked. It fixes the shape of a real app:
+  `profiles` with roles filled by a sign-up trigger, `is_admin()` /
+  `is_staff()` helpers and a policy set per table, money in kobo, orders
+  and bookings as state machines moved by one SQL function that also logs
+  events and decrements stock, edge functions for anything with a secret,
+  loading/empty/error states, pagination, realtime for the admin table,
+  and a definition of done (sign-up to first order works end to end, the
+  owner moves it along in /admin, policies stop a customer's admin writes).
+  `references/patterns.md` carries the SQL and TypeScript to copy
+  (migrations, AuthProvider, route guards, db helpers, edge-function
+  skeleton). The completeness review checks that definition of done when
+  a backend is linked. `BUILDER_FULLSTACK_SKILL` turns it off.
 - **Complete first builds**: a first build has its own step budget
   (`BUILDER_BUILD_MAX_STEPS`, 40) and, after the model answers, one
   completeness review (`data-review` part): the app is compared with the

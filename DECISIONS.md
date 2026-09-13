@@ -419,3 +419,32 @@ page-cro, pricing-page, seo-audit, schema-markup.
   anything. Users cannot write a brief; the builder can, and marks its
   assumptions so the questions are about the things that matter. Stored as
   `brief_md`; the planner's history carries it on later turns.
+
+## 14. App-logic skill (2026-09-13)
+
+The design, copy and payments skills made sites look and read right, but a
+project with Supabase linked still got whatever shape the model felt like:
+auth done three ways, status set by plain updates, no policies on half the
+tables, seed data in the client. The user's ask: "someone might wanna build a
+solid full stack app... login signup... more complex logic".
+
+- `skills/fullstack/SKILL.md` is the method (structure, accounts, roles and
+  RLS, data, lifecycles, edge functions, real-world edges, definition of
+  done); `references/patterns.md` is the code to copy (profiles + trigger +
+  `is_admin/is_staff`, an orders schema with items and events and its policy
+  set, `advance_order` as the single transition function, a storage bucket,
+  AuthProvider, RequireAuth/RequireRole, db helpers with pagination, an
+  edge-function skeleton, realtime). Patterns are inline because the model
+  reproduces exact SQL far better than it invents it.
+- Attached only when the project has a backend (`skills.fullstack_block`),
+  ordered design, copy, app logic, payments: the payments flow builds on the
+  orders the app-logic skill defines. About 6k tokens, in the cached part of
+  the prompt.
+- The completeness review gets `FULLSTACK_BRIEF` when a backend is linked:
+  the definition of done is checked, not assumed, and the final reply must
+  say how to sign in as the owner.
+- The prompt's Supabase section now points at the skill instead of repeating it.
+- Not yet proven live: needs a Supabase PAT (or the OAuth app) so the
+  migration and function tools run for real, then one full-stack shop build
+  from sign-up to a moved order. Paystack test keys make the verified
+  payment path part of the same run.

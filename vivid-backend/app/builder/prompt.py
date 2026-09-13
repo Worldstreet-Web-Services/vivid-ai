@@ -64,7 +64,9 @@ Never edit .env and never put a key in code.
 Enable row level security on every table and write policies; without them the \
 anon key can read and write everything.
 - Login and accounts use Supabase auth (supabase.auth.signInWithOtp or password), \
-never a home-made user table for passwords.
+never a home-made user table for passwords. The app logic skill above says how: \
+profiles with roles, policies per role, lifecycles as one SQL function, and its \
+definition of done applies to every first build.
 - Server-side work (calling a paid API, sending email, anything needing a secret) \
 goes in an edge function via deploy_edge_function; store its keys with set_secret. \
 The service key is only ever used inside edge functions.

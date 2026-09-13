@@ -98,6 +98,16 @@ cart, book, save); the footer has the real business details; the copy passes the
 skill's checks. list_files and read what you need, then build everything that is missing or thin \
 now, in this turn. Do not shorten anything. When it is complete, reply to the user in one or \
 two sentences about what the app now contains."""
+#: Added to the completeness brief when the project has a Supabase backend:
+#: the app-logic skill's definition of done, checked, not assumed.
+FULLSTACK_BRIEF = """ This project has a Supabase backend, so also check the app-logic skill's \
+definition of done: sign-up, sign-in, sign-out and password reset exist and the session \
+survives a reload; a new customer can do the main thing end to end and see it in their \
+account; the owner signs in, lands in /admin and can move an order or booking to its next \
+state through the transition function; every table has row level security with policies \
+per role; nothing that matters is kept in localStorage; no service key or secret in src/ or \
+.env. Build what is missing with apply_migration and the files, then tell the user how to \
+sign in as the owner."""
 #: Seconds before restarting a broken stream, multiplied by the attempt.
 _RETRY_BACKOFF = 1.5
 
@@ -242,7 +252,8 @@ class TurnRunner:
                          self.spec_md, block, backend=self.backend is not None,
                          assets_block=self.assets_block,
                          skill_block=skills.ui_block(self.spec_md, self.user_text,
-                                                    payments=self.payments))}]
+                                                    payments=self.payments,
+                                                    backend=self.backend is not None))}]
         messages += self.history
         messages.append({"role": "user", "content": self.user_text})
 
@@ -320,7 +331,8 @@ class TurnRunner:
                     yield stream.data("status", {"text": "Checking the app against the spec"})
                     yield stream.data("review", {"kind": "completeness",
                                                  "round": self.result.completion_rounds})
-                    messages.append({"role": "user", "content": COMPLETION_BRIEF})
+                    brief = COMPLETION_BRIEF + (FULLSTACK_BRIEF if self.backend is not None else "")
+                    messages.append({"role": "user", "content": brief})
                     budget = step + settings.BUILDER_COMPLETION_STEPS
                     review_deadline = budget
                     if self.keepalive is not None:

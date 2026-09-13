@@ -153,3 +153,42 @@ def test_prompt_gets_the_backend_section_only_when_linked():
     text = system_prompt(None, "ctx", backend=True)
     assert "Backend: Supabase" in text and "row level security" in text
     assert "service key is only ever used inside edge functions" in text
+
+
+async def test_backend_turn_carries_the_app_logic_skill_and_its_done_check(monkeypatch):
+    from app.builder import loop, routing
+    from app.builder.loop import TurnRunner
+    from tests.builder_fakes import FakeSandbox
+    from tests.test_builder_loop import call, collect, install
+
+    monkeypatch.setattr(settings, "BUILDER_COMPLETION_ROUNDS", 1)
+    monkeypatch.setattr(settings, "BUILDER_COMPLETION_STEPS", 2)
+    monkeypatch.setattr(settings, "BUILDER_CRITIQUE_ROUNDS", 0)
+    model = install(monkeypatch, [
+        ("Building.", [call("write_file", {"path": "src/A.tsx", "content": "export {}"})]),
+        ("Done.", []),
+        ("Reviewed.", []),
+    ])
+    sb = FakeSandbox({"src/App.tsx": "x"})
+    backend = tools.Backend(ref="refone", token="t")
+    runner = TurnRunner(sb, routing.BUILD, [], "a shop", spec_md="# Spec\nA shop",
+                        backend=backend)
+    await collect(runner)
+    assert runner.result.reason == loop.ANSWERED and runner.result.completion_rounds == 1
+    system = model.requests[0]["messages"][0]["content"]
+    assert "## App logic skill" in system and "Backend: Supabase" in system
+    assert system.index("## App logic skill") < system.index("Backend: Supabase")
+    review = model.requests[2]["messages"][-1]["content"]
+    assert review.startswith("Before we show this") and "definition of done" in review
+    assert "sign in as the owner" in review
+
+    # No backend: the same review without the full-stack check.
+    model = install(monkeypatch, [
+        ("Building.", [call("write_file", {"path": "src/A.tsx", "content": "export {}"})]),
+        ("Done.", []), ("Reviewed.", []),
+    ])
+    runner = TurnRunner(FakeSandbox({"src/App.tsx": "x"}), routing.BUILD, [], "a shop",
+                        spec_md="# Spec\nA shop")
+    await collect(runner)
+    assert "## App logic skill" not in model.requests[0]["messages"][0]["content"]
+    assert "definition of done" not in model.requests[2]["messages"][-1]["content"]
