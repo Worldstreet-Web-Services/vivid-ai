@@ -544,3 +544,124 @@ Next on the list from this run: re-encode generated pictures as JPEG or
 WebP at write time (needs Pillow), a clearer cap message so the model stops
 asking for pictures, and the fallback should inherit the primary's
 tool-result history instead of re-reading.
+
+### Chopwell round two (2026-09-13, morning)
+
+The user's review of the live site: no way to sign out on desktop, the
+orders page and the post-sign-up screen spinning forever, +234 phone
+numbers rejected, checkout not pre-filled, kitchens sharing covers, 1 MB
+pictures, and "how do riders create an account" (they could not: the plan
+had put rider self-signup out of scope, and a browser app cannot create
+other people's accounts). Changes:
+
+- Generated pictures are re-encoded at write time (Pillow): JPEG at 82 for
+  photos, PNG kept for logos, longest side 1280. Live covers went from
+  1.2 MB to 96 KB.
+- Fullstack skill: other roles join by self sign-up with approval (pending
+  status, "being reviewed" screen, Approve/Reject in /admin under the
+  policies); `AuthProvider.loading` must resolve and a missing profile
+  never blocks the page; every list sets loading false in `finally`;
+  phone formats `0803...` and `+234...` both accepted; checkout pre-filled
+  from the profile and the last address. Design skill: signed-in header is
+  an account dropdown with Sign out, on desktop and phone; nav items are
+  Links or buttons.
+- Google Maps connector (`google_maps`, a browser key verified by one
+  geocoding call), `POST /projects/{id}/maps`, `VITE_GOOGLE_MAPS_KEY`, and
+  a maps skill: Places autocomplete on every address field, distance-based
+  fees with haversine, a map on tracking pages, graceful without a key.
+  Lovable has no such connector; its users paste keys into code.
+- Loop: the fallback model now inherits the primary's conversation (tool
+  calls and results, long results trimmed to 600 chars) plus a handover
+  note, instead of re-reading the project; clean edit turns get one
+  extension of 15 steps. Snapshot take and restore get five minutes.
+- Observed: three handovers in a row where the fallback re-did work and
+  ran out of steps before answering (SwiftDrop, Chopwell build, and both
+  Chopwell repair turns); the inherited conversation is the fix. The
+  laptop's uplink to E2B and OpenRouter was the other cost (resets,
+  timeouts); the server does not have it.
+
+## 16. The frontend dev's twelve issues, and motion (2026-09-13)
+
+The Next.js client's integration report (kept in the thread) mapped to:
+
+1. A disconnected stream lost the whole turn. Cause: the turn ran inside
+   the response generator, so a client abort cancelled the generator
+   before persistence, while the sandbox work already queued kept going.
+   Fix: the turn is an asyncio task writing to a `TurnFeed` (loop.py);
+   the response and any later reader follow the feed; persistence happens
+   in the task. A cancel is a flag the task reads.
+2. `Project.turn_status` / `turn_started_at` from the registry, and
+   `GET .../chat/stream` to reattach (replay + follow, 204 when idle).
+3. CORS: `CORS_ORIGINS` setting; localhost:3001 added to the dev default;
+   production origins go in app.env on the server.
+4. `Project.thumbnail_url`: the critique's desktop shot key is stored on
+   the project (`thumbnail_key`), presented as a 7-day signed URL.
+5. Binary files: `GET .../files/{path}` marks binaries (`binary`,
+   `content_base64`, `content_type`) and `?raw=1` serves the bytes.
+6. `POST /keys` documented in the guide's new endpoint index and §0.
+7. Supabase OAuth: config only (client id/secret on the server).
+8. Malformed tool arguments: the loop now asks the model to redo that exact
+   call before anything else, records `failed_tools` ("write_file
+   src/pages/Deal.tsx") and puts it in `data-usage`.
+9. `data-usage.ok` plus the closed set of reasons, documented.
+10. `/auth/refresh` ignores a stale bearer and answers `refresh_expired`.
+11. Endpoint index at the top of llms.txt; maps and the full-stack flag are
+    in it.
+12. A first build that wrote no files: a blank reply is nudged, a "done"
+    with no writes is pushed once to build, then `no_changes` (a retryable
+    outcome, so the fallback takes it with the inherited conversation);
+    and no snapshot is taken for a turn that changed nothing.
+Small notes fixed in the guide: wire vs folded part names, POST /build
+does not start a turn, the brief arrives twice, the vivid:error snippet
+checks `event.origin`.
+
+Motion: `skills/motion/SKILL.md` (GSAP + ScrollTrigger, Framer Motion
+entrances and hover language, parallax layers, grain, glow, a WebGL shader
+backdrop, glitter accents, font loading with alternates, reduced-motion
+and performance rules), attached for landing, platform, portfolio and
+shop recipes or any request that mentions animation; `gsap` and `motion`
+added to the template's package.json for the next template build.
+
+## 17. Motion in depth, favicons, visitor analytics (2026-09-13)
+
+- Motion skill rewritten with a budget (entrances, hover language, one
+  hero effect, one scroll story, ambience, page transitions), exact timing
+  and easing numbers, and `references/patterns.md` with the components to
+  copy: Reveal/RevealGroup/SplitLines, hover presets, NavPill, Parallax,
+  Tilt, Magnetic, useCountUp and a pinned GSAP section, Grain, Glow,
+  Glitter, CursorGlow, a WebGL ShaderBackdrop, PageTransition, a CSS
+  marquee, font loading with alternates. Attached with the design skill
+  for landing, platform, portfolio and shop recipes or any animation ask.
+- Favicon by default: a generated logo is also written as
+  public/favicon.png (256px) and index.html gets the icon links; the design
+  skill asks for title, description, theme-color and Open Graph tags; the
+  completeness review checks them; the template ships a neutral favicon
+  and the links (needs a template rebuild to reach new sandboxes).
+- Visitor analytics: `builder_pageviews` table; `POST /v1/a/{project_id}`
+  public collector (text/plain body so no preflight, ACAO *, sendBeacon,
+  daily salted visitor hash, 60/min per address, ignores unknown projects
+  and bad bodies with 204); the reporter is injected into dist/index.html
+  at publish time, never into the source, and stays quiet on localhost and
+  sandbox previews; `GET /builder/projects/{id}/analytics?days=` rolls up
+  totals, per day, pages, referrers, devices, countries.
+
+### Live proof: Ọ̀nà Studio (2026-09-13)
+
+A sneaker brand store as a site (not full-stack), Paystack on. Plan chose
+`shop`; the build wrote motion components (Reveal, Parallax, Ambience,
+PageTransition) before the pages, 65 files, 93 steps including the
+extension and a fallback that inherited the conversation and answered at
+once; 16 pictures in two concurrent batches, 27 refused picture calls
+afterwards (fixed: the tool is withdrawn once the budget is spent). Live
+at https://ona-studio-d8be74.vivid-apps.pages.dev with favicon, title,
+description, theme-color and Open Graph tags, and the analytics reporter
+in the page; a browser-style pageview landed and the rollup returned it.
+Dark editorial look with the orange accent, eyebrow, size pills, drop
+section, lookbook.
+
+Finding: full-page screenshots catch `whileInView` entrances before they
+fire, so sections below the fold look faded or blank in critique shots
+(and in our own). The screenshot script should scroll the page to the
+bottom in steps, then back up, before capturing; that is a template
+change (scripts/screenshot.mjs) for the next rebuild, together with the
+gsap/motion packages and the default favicon.

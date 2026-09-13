@@ -24,7 +24,8 @@ class ScriptedModel:
     async def stream_chat(self, messages, tools, max_tokens=None, endpoint=None,
                           temperature=None):
         # A copy: the loop keeps appending to the same list.
-        self.requests.append({"messages": [dict(m) for m in messages], "model": endpoint.model})
+        self.requests.append({"messages": [dict(m) for m in messages], "model": endpoint.model,
+                              "tools": [t["function"]["name"] for t in tools]})
         if not self.script:
             text, calls = "Done.", []
         else:
@@ -40,6 +41,9 @@ class ScriptedModel:
 @pytest.fixture(autouse=True)
 def models(monkeypatch):
     monkeypatch.setattr(settings, "OPENROUTER_API_KEY", "test-key")
+    # Extensions are tested on their own; the cap tests want a hard cap.
+    monkeypatch.setattr(settings, "BUILDER_EDIT_EXTENSION_STEPS", 0)
+    monkeypatch.setattr(settings, "BUILDER_BUILD_EXTENSION_STEPS", 0)
     monkeypatch.setattr(settings, "BUILD_MODEL", "vendor/primary")
     monkeypatch.setattr(settings, "EDIT_MODEL", "vendor/primary")
     monkeypatch.setattr(settings, "FALLBACK_MODEL", "vendor/fallback")
@@ -164,7 +168,7 @@ async def test_broken_stream_is_restarted(monkeypatch):
         async for ev in model.stream_chat(messages, tools, max_tokens, endpoint, temperature):
             yield ev
     monkeypatch.setattr(code_llm, "stream_chat", flaky)
-    runner = TurnRunner(FakeSandbox({"src/App.tsx": "x"}), routing.BUILD, [], "hi")
+    runner = TurnRunner(FakeSandbox({"src/App.tsx": "x"}), routing.EDIT, [], "hi")
     parts, c = await collect(runner)
     assert runner.result.reason == loop.ANSWERED and not runner.result.retried
     assert runner.result.model == "vendor/primary" and calls["n"] == 2
@@ -185,7 +189,7 @@ async def test_dead_primary_falls_back_to_the_other_vendor(monkeypatch):
         yield {"type": "token", "text": "Fallback here."}
         yield {"type": "done", "finish_reason": "stop", "usage": None}
     monkeypatch.setattr(code_llm, "stream_chat", broken)
-    runner = TurnRunner(FakeSandbox({"src/App.tsx": "x"}), routing.BUILD, [], "hi")
+    runner = TurnRunner(FakeSandbox({"src/App.tsx": "x"}), routing.EDIT, [], "hi")
     parts, c = await collect(runner)
     assert seen == ["vendor/primary", "vendor/primary", "vendor/fallback"]
     assert runner.result.reason == loop.ANSWERED and runner.result.retried
@@ -199,7 +203,7 @@ async def test_both_vendors_dead_is_an_error(monkeypatch):
         raise code_llm.CodeLLMUnavailable("upstream 502")
         yield  # pragma: no cover
     monkeypatch.setattr(code_llm, "stream_chat", broken)
-    runner = TurnRunner(FakeSandbox({"src/App.tsx": "x"}), routing.BUILD, [], "hi")
+    runner = TurnRunner(FakeSandbox({"src/App.tsx": "x"}), routing.EDIT, [], "hi")
     parts, _ = await collect(runner)
     errors = [p for p in parts if p["type"] == "error"]
     assert len(errors) == 2 and "unavailable" in errors[0]["errorText"]
@@ -232,7 +236,8 @@ def test_turn_registry():
     reg = loop.TurnRegistry()
     ev = reg.start("p1")
     assert ev is not None and reg.start("p1") is None and reg.running("p1")
-    assert reg.cancel("p1") and ev.is_set()
+    assert reg.started_at("p1") is not None and reg.get("p1") is ev
+    assert reg.cancel("p1") and ev.cancel.is_set()
     reg.finish("p1")
     assert not reg.running("p1") and not reg.cancel("p1")
 
@@ -288,10 +293,11 @@ async def test_first_build_extends_once_while_clean_then_falls_back(monkeypatch)
     assert runner.result.reason == loop.STEP_LIMIT
 
 
-async def test_no_extension_for_edits_or_after_a_failed_typecheck(monkeypatch):
+async def test_edits_extend_once_too_but_not_after_a_failed_typecheck(monkeypatch):
     monkeypatch.setattr(settings, "BUILDER_MAX_STEPS", 2)
     monkeypatch.setattr(settings, "BUILDER_BUILD_MAX_STEPS", 2)
     monkeypatch.setattr(settings, "BUILDER_BUILD_EXTENSION_STEPS", 2)
+    monkeypatch.setattr(settings, "BUILDER_EDIT_EXTENSION_STEPS", 1)
     monkeypatch.setattr(settings, "BUILDER_COMPLETION_ROUNDS", 0)
     monkeypatch.setattr(settings, "BUILDER_CRITIQUE_ROUNDS", 0)
     forever = [("", [call("write_file", {"path": f"src/F{i}.tsx", "content": "export {}"}, f"c{i}")])
@@ -299,7 +305,7 @@ async def test_no_extension_for_edits_or_after_a_failed_typecheck(monkeypatch):
     model = install(monkeypatch, forever)
     runner = TurnRunner(FakeSandbox({"src/App.tsx": "x"}), routing.EDIT, [], "tweak")
     await collect(runner)
-    assert [r["model"] for r in model.requests][:3] == ["vendor/primary"] * 2 + ["vendor/fallback"]
+    assert [r["model"] for r in model.requests][:4] == ["vendor/primary"] * 3 + ["vendor/fallback"]
 
     # A first build whose last typecheck failed gets no extension either.
     sb = FakeSandbox({"src/App.tsx": "x"})
@@ -308,3 +314,98 @@ async def test_no_extension_for_edits_or_after_a_failed_typecheck(monkeypatch):
     runner = TurnRunner(sb, routing.BUILD, [], "build", spec_md="# Spec\nBig")
     await collect(runner)
     assert [r["model"] for r in model.requests][:3] == ["vendor/primary"] * 2 + ["vendor/fallback"]
+
+
+async def test_fallback_inherits_the_primary_conversation(monkeypatch):
+    """The second model sees the first model's tool calls and results plus a
+    handover note, so it continues instead of re-reading everything."""
+    monkeypatch.setattr(settings, "BUILDER_MAX_STEPS", 2)
+    monkeypatch.setattr(settings, "BUILDER_EDIT_EXTENSION_STEPS", 0)
+    monkeypatch.setattr(settings, "BUILDER_CRITIQUE_ROUNDS", 0)
+    model = install(monkeypatch, [
+        ("Reading.", [call("read_file", {"path": "src/App.tsx"}, "c1")]),
+        ("Writing.", [call("write_file", {"path": "src/B.tsx", "content": "export {}"}, "c2")]),
+        ("Done now.", []),
+    ])
+    sb = FakeSandbox({"src/App.tsx": "x" * 2000})
+    runner = TurnRunner(sb, routing.EDIT, [], "add B")
+    await collect(runner)
+    assert [r["model"] for r in model.requests] == ["vendor/primary"] * 2 + ["vendor/fallback"]
+    handed = model.requests[2]["messages"]
+    roles = [m["role"] for m in handed]
+    assert roles[:2] == ["system", "user"] and "tool" in roles          # the primary's turn rides along
+    assert handed[-1]["role"] == "user" and "ran out of steps" in handed[-1]["content"]
+    tool_results = [m for m in handed if m["role"] == "tool"]
+    assert any(m["content"].endswith("(shortened)") for m in tool_results)  # long reads trimmed
+    assert runner.result.reason == loop.ANSWERED and runner.result.retried
+
+
+async def test_first_build_that_writes_nothing_is_not_an_answer(monkeypatch):
+    """Reads only, then "done": one push to build, then no_changes and the
+    fallback with the conversation in hand; the usage part says ok=false."""
+    monkeypatch.setattr(settings, "BUILDER_COMPLETION_ROUNDS", 0)
+    monkeypatch.setattr(settings, "BUILDER_CRITIQUE_ROUNDS", 0)
+    monkeypatch.setattr(settings, "BUILDER_BUILD_MAX_STEPS", 10)
+    model = install(monkeypatch, [
+        ("I'll start by reading.", [call("read_file", {"path": "src/App.tsx"}, "c1")]),
+        ("", []),                                             # blank reply: nudged
+        ("All done.", []),                                    # no files: nudged to build
+        ("Really done.", []),                                 # still nothing: no_changes
+        ("Fallback writes.", [call("write_file", {"path": "src/A.tsx", "content": "export {}"}, "c2")]),
+        ("Built it.", []),
+    ])
+    sb = FakeSandbox({"src/App.tsx": "x"})
+    runner = TurnRunner(sb, routing.BUILD, [], "build it", spec_md="# Spec\nA page")
+    parts, c = await collect(runner)
+    models_used = [r["model"] for r in model.requests]
+    assert models_used[-2:] == ["vendor/fallback"] * 2 and models_used.count("vendor/primary") >= 3
+    nudges = [m["content"] for r in model.requests for m in r["messages"]
+              if m["role"] == "user" and m["content"] in (loop.BLANK_NUDGE, loop.BUILD_NUDGE)]
+    assert loop.BUILD_NUDGE in nudges                     # a blank stream may be retried by ModelStep first
+    assert runner.result.reason == loop.ANSWERED and runner.result.retried
+    usage = [p for p in parts if p["type"] == "data-usage"][0]["data"]
+    assert usage["ok"] is True and usage["failed_tools"] == []
+    notice = [p for p in parts if p["type"] == "data-notice"][0]["data"]
+    assert notice["reason"] == loop.NO_CHANGES
+
+
+async def test_unparseable_tool_call_is_asked_for_again_and_named(monkeypatch):
+    monkeypatch.setattr(settings, "BUILDER_CRITIQUE_ROUNDS", 0)
+    bad = {"id": "c1", "name": "write_file", "arguments": {},
+           "error": 'arguments were not valid JSON (x): {"path": "src/pages/Deal.tsx", "content": "…'}
+    model = install(monkeypatch, [
+        ("Writing.", [bad]),
+        ("Again.", [call("write_file", {"path": "src/pages/Deal.tsx", "content": "export {}"}, "c2")]),
+        ("Done.", []),
+    ])
+    sb = FakeSandbox({"src/App.tsx": "x"})
+    runner = TurnRunner(sb, routing.EDIT, [], "add the deal dialog")
+    parts, c = await collect(runner)
+    second = model.requests[1]["messages"]
+    assert second[-1]["role"] == "user" and "src/pages/Deal.tsx" in second[-1]["content"]
+    assert "could not be parsed" in second[-1]["content"]
+    assert sb.files["src/pages/Deal.tsx"] == "export {}"
+    usage = [p for p in parts if p["type"] == "data-usage"][0]["data"]
+    assert usage["failed_tools"] == ["write_file src/pages/Deal.tsx"] and usage["ok"] is True
+
+
+async def test_turn_feed_replays_and_follows():
+    feed = loop.TurnFeed("p1")
+    await feed.push({"type": "start"})
+    await feed.push({"type": "text-delta", "delta": "hi"})
+    seen = []
+
+    async def reader(start):
+        async for part in feed.follow(start):
+            seen.append((start, part.get("type") if isinstance(part, dict) else "DONE"))
+
+    import asyncio
+    t1 = asyncio.create_task(reader(0))
+    t2 = asyncio.create_task(reader(2))         # a late reader misses nothing new
+    await asyncio.sleep(0.01)
+    await feed.push({"type": "finish"})
+    await feed.push(loop.FEED_DONE)
+    await feed.close()
+    await asyncio.gather(t1, t2)
+    assert seen.count((0, "start")) == 1 and (2, "start") not in seen
+    assert (0, "finish") in seen and (2, "finish") in seen and (2, "DONE") in seen

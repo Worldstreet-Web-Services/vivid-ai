@@ -27,7 +27,7 @@ def env(monkeypatch):
 
 
 def test_recipes_come_from_disk_and_the_block_carries_the_chosen_one():
-    assert skills.available() == ["copy", "design", "fullstack", "maps", "payments"]
+    assert skills.available() == ["copy", "design", "fullstack", "maps", "motion", "payments"]
     names = skills.recipe_names()
     assert names == ["booking", "dashboard", "landing", "platform", "portfolio", "shop"]
     menu = skills.recipe_menu()
@@ -86,7 +86,7 @@ def test_fullstack_skill_only_with_a_backend(monkeypatch):
 
 
 def test_copy_skill_rides_with_the_design_skill():
-    assert skills.available() == ["copy", "design", "fullstack", "maps", "payments"]
+    assert skills.available() == ["copy", "design", "fullstack", "maps", "motion", "payments"]
     block = skills.ui_block("# Spec\nA salon booking app", "", recipe="booking")
     assert "## Design skill" in block and "## Copy skill" in block
     assert block.index("## Design skill") < block.index("## Copy skill")
@@ -521,3 +521,85 @@ def test_maps_skill_only_with_a_key():
                          recipe="platform", maps="google")
     assert ui.index("## Payments skill") < ui.index("## Maps skill")
     assert "## Maps skill" not in skills.ui_block("x", "")
+
+
+def test_motion_skill_for_hero_pages_and_animation_requests(monkeypatch):
+    assert skills.motion_block("platform").startswith("## Motion skill\n# Motion and polish")
+    assert "ScrollTrigger" in skills.motion_block("landing") and "ShaderBackdrop" in skills.motion_block("shop")
+    assert skills.motion_block("dashboard") == "" and skills.motion_block(None) == ""
+    assert "## Motion skill" in skills.motion_block("dashboard", "add a parallax hero")
+    ui = skills.ui_block("# Spec", "", recipe="platform")
+    assert ui.index("## Copy skill") < ui.index("## Motion skill")
+    monkeypatch.setattr(settings, "BUILDER_MOTION_SKILL", False)
+    assert skills.motion_block("platform") == ""
+
+
+async def test_logo_also_becomes_the_favicon(monkeypatch):
+    import io
+    from PIL import Image
+    from app.builder import images as images_mod
+    from app.services.models_gateway import media
+    from tests.test_builder_assets import png
+
+    async def fake_generate(prompt, aspect_ratio="1:1"):
+        return png(512, 512), "image/png"
+    monkeypatch.setattr(media, "generate_image", fake_generate)
+
+    class FakeAsset:
+        def __init__(self, name): self.name, self.meta = name, {"width": 512, "height": 512}
+
+    async def fake_add(db, project_id, filename, mime, data): return FakeAsset(filename)
+
+    class FakeSession:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        def add(self, row): pass
+        async def commit(self): pass
+    monkeypatch.setattr(images_mod.assets, "add", fake_add)
+    monkeypatch.setattr(images_mod, "async_session", lambda: FakeSession())
+
+    sb = FakeSandbox({"index.html": "<html><head><title>x</title></head><body></body></html>"})
+    maker = images_mod.ImageMaker("p1", sb, limit=2)
+    await maker.make("a bolt in a circle", "mark", kind="logo")
+    icon = sb.blobs["public/favicon.png"]
+    assert Image.open(io.BytesIO(icon)).size == (256, 256)
+    assert 'rel="icon"' in sb.files["index.html"] and "apple-touch-icon" in sb.files["index.html"]
+    assert images_mod.with_favicon_links(sb.files["index.html"]) == sb.files["index.html"]   # once
+    assert sb.blobs["public/uploads/mark.png"][:4] == b"\x89PNG"                           # logos stay PNG
+
+
+async def test_picture_tool_disappears_once_the_budget_is_spent(monkeypatch):
+    from app.builder import images as images_mod
+    from app.services.models_gateway import media
+    from tests.test_builder_assets import png
+
+    async def fake_generate(prompt, aspect_ratio="1:1"):
+        return png(8, 8), "image/png"
+    monkeypatch.setattr(media, "generate_image", fake_generate)
+
+    class FakeAsset:
+        def __init__(self, name): self.name, self.meta = name, {"width": 8, "height": 8}
+
+    async def fake_add(db, project_id, filename, mime, data): return FakeAsset(filename)
+
+    class FakeSession:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        def add(self, row): pass
+        async def commit(self): pass
+    monkeypatch.setattr(images_mod.assets, "add", fake_add)
+    monkeypatch.setattr(images_mod, "async_session", lambda: FakeSession())
+    monkeypatch.setattr(settings, "BUILDER_CRITIQUE_ROUNDS", 0)
+
+    sb = FakeSandbox({"src/App.tsx": "x"})
+    maker = images_mod.ImageMaker("p1", sb, limit=1)
+    model = ScriptedModel([
+        ("One picture.", [call("generate_image", {"prompt": "a red sneaker on grey", "name": "one"}, "c1")]),
+        ("Now code.", [call("write_file", {"path": "src/A.tsx", "content": "export {}"}, "c2")]),
+        ("Done.", []),
+    ])
+    monkeypatch.setattr(code_llm, "stream_chat", model.stream_chat)
+    runner = TurnRunner(sb, routing.EDIT, [], "pictures then code", images=maker)
+    await collect(runner)
+    assert "generate_image" in model.requests[0]["tools"]
+    assert "generate_image" not in model.requests[1]["tools"]        # budget spent

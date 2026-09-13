@@ -11,6 +11,7 @@ model call completes, so a broken stream leaves the conversation valid, and
 a tool result is always paired with the assistant turn that asked for it.
 """
 import asyncio
+from datetime import datetime, timezone
 import json
 import logging
 import re
@@ -33,7 +34,11 @@ ERROR = "error"
 
 #: Attempt outcomes that earn a retry on the fallback model. ERROR is the
 #: primary's stream failing repeatedly; the fallback is another vendor.
-RETRYABLE = {STEP_LIMIT, TYPECHECK_STRIKES, ERROR}
+#: A build turn that ended without changing a file: not an answer.
+NO_CHANGES = "no_changes"
+RETRYABLE = {STEP_LIMIT, TYPECHECK_STRIKES, ERROR, NO_CHANGES}
+#: The reasons a client may treat as "the turn ended the way it meant to".
+OK_REASONS = {ANSWERED, "asked", "spec_written"}
 
 RETRY_NOTICE = "Retrying with a different model."
 
@@ -54,6 +59,10 @@ class TurnResult:
     model: str = ""
     calls: list[ModelCall] = field(default_factory=list)
     touched: list[str] = field(default_factory=list)
+    #: Tool calls whose arguments could not be parsed, as "name path".
+    failed_tools: list[str] = field(default_factory=list)
+    #: Storage key of the latest desktop screenshot, for the project card.
+    thumbnail_key: str | None = None
     typecheck_failures: int = 0
     retried: bool = False
     critique_rounds: int = 0
@@ -72,6 +81,42 @@ class TurnResult:
 
 STREAM_RETRY_NOTICE = "The model connection dropped; retrying."
 
+_REASON_WORDS = {"step_limit": "it ran out of steps", "typecheck_strikes": "the typecheck kept failing",
+                 "error": "its connection failed", "no_changes": "it wrote no files"}
+#: The fallback needs what was done, not every byte of it: long tool
+#: results are shortened to their first lines.
+_CARRY_RESULT_CHARS = 600
+
+
+_PATH_IN_ERROR = re.compile(r'"path"\s*:\s*"([^"]+)"')
+
+
+def _path_hint(error: str) -> str:
+    m = _PATH_IN_ERROR.search(error or "")
+    return m.group(1) if m else ""
+
+
+def _trim_carry(messages: list[dict]) -> list[dict]:
+    out = []
+    for m in messages:
+        if m.get("role") == "tool" and isinstance(m.get("content"), str) \
+                and len(m["content"]) > _CARRY_RESULT_CHARS:
+            m = dict(m, content=m["content"][:_CARRY_RESULT_CHARS] + "\n... (shortened)")
+        out.append(m)
+    return out
+
+
+#: Put to the fallback model after the primary's conversation: continue,
+#: do not start over.
+HANDOVER_NOTE = ("The previous model stopped here ({reason}); the files it wrote are in place and "
+                 "its tool results above are current. Continue from this state: do not re-read "
+                 "files you can see above, do not remake pictures or migrations already made, "
+                 "finish what is left, get the typecheck clean, and reply to the user.")
+BUILD_NUDGE = ("You have not changed any files yet. Build the app now: write the files with "
+               "write_file (several per step), install what you need with run_command, and "
+               "only then reply. Do not describe the plan.")
+BLANK_NUDGE = ("Your reply was empty. Continue the work with tool calls now, or answer the "
+               "user in plain sentences.")
 CONTINUE_NUDGE = ("Go on and do it now with the tools; do not describe what you are about "
                   "to do. Reply to the user only when the work is complete.")
 
@@ -95,7 +140,8 @@ seeded items with names, prices in the spec's currency, short descriptions and a
 lists; every image path used in the code AND in seeded database rows (query the tables that hold \
 image columns) exists in public/uploads (list_files it; generate or repoint any that do \
 not, a broken image is worse than none); forms work end to end (add to \
-cart, book, save); the footer has the real business details; the copy passes the copy \
+cart, book, save); index.html has a real title, description, theme-color and a favicon link \
+with public/favicon.png present; the footer has the real business details; the copy passes the copy \
 skill's checks. list_files and read what you need, then build everything that is missing or thin \
 now, in this turn. Do not shorten anything. When it is complete, reply to the user in one or \
 two sentences about what the app now contains."""
@@ -194,6 +240,9 @@ class TurnRunner:
         self.recipe = recipe
         #: "google" when the project has a Maps key; adds the maps skill.
         self.maps = maps
+        #: The previous attempt's conversation, handed to the next model.
+        self._carry: list[dict] = []
+        self._live: tuple[list[dict], int] | None = None
         #: The user asked for accounts and server-side data (plan or client
         #: set it). Adds the app-logic skill when a backend is linked.
         self.fullstack = fullstack
@@ -255,7 +304,8 @@ class TurnRunner:
         yield stream.data("usage", {
             "model": self.result.model, "steps": self.result.steps,
             "tokens_in": self.result.tokens_in, "tokens_out": self.result.tokens_out,
-            "reason": outcome,
+            "reason": outcome, "ok": outcome in OK_REASONS,
+            "failed_tools": list(self.result.failed_tools),
         })
         yield stream.finish()
 
@@ -270,6 +320,16 @@ class TurnRunner:
     async def _attempt(self, endpoint: provider.Endpoint, stage: str) -> AsyncIterator[dict]:
         """One model's try at the turn. Sets self.result.reason on exit."""
         self.result.model = endpoint.model
+        self._live = None
+        try:
+            async for part in self._attempt_inner(endpoint, stage):
+                yield part
+        finally:
+            if self._live is not None:
+                messages, base_len = self._live
+                self._carry = _trim_carry(messages[base_len:])
+
+    async def _attempt_inner(self, endpoint: provider.Endpoint, stage: str) -> AsyncIterator[dict]:
         block = await context.build(self.sandbox, self.recent_files)
         messages = [{"role": "system",
                      "content": prompt.system_prompt(
@@ -283,6 +343,15 @@ class TurnRunner:
                          functions=self.backend is None or self.backend.can_functions)}]
         messages += self.history
         messages.append({"role": "user", "content": self.user_text})
+        if self._carry:
+            # A handover: the fallback sees what the primary did and why it
+            # stopped, instead of re-reading the project from scratch.
+            messages += self._carry
+            messages.append({"role": "user", "content": HANDOVER_NOTE.format(
+                reason=_REASON_WORDS.get(self.result.reason, self.result.reason))})
+        base_len = len(messages)
+        self._carry = []
+        self._live = (messages, base_len)
 
         strikes = 0
         # The turn's stage, not the attempt's: a fallback attempt of a first
@@ -300,13 +369,14 @@ class TurnRunner:
         step = 0
         while True:
             step += 1
-            if step > budget and first_build and not extended and strikes == 0 \
+            if step > budget and not extended and strikes == 0 \
                     and review_deadline is None and not self.result.completion_rounds \
                     and not self.result.critique_rounds:
                 # Still writing clean files at the cap: more steps for this
-                # model beat a handover that re-reads everything.
+                # model beat a handover.
                 extended = True
-                budget += settings.BUILDER_BUILD_EXTENSION_STEPS
+                budget += (settings.BUILDER_BUILD_EXTENSION_STEPS if first_build
+                           else settings.BUILDER_EDIT_EXTENSION_STEPS)
                 yield stream.data("status", {"text": "Still building, a few more steps"})
             if step > budget:
                 if (review_deadline is not None and step > review_deadline
@@ -320,6 +390,7 @@ class TurnRunner:
                         f"{self.message_id}-r{self.result.critique_rounds + 1}")
                     if shots:
                         self.result.critique_rounds += 1
+                        self.result.thumbnail_key = shots[0].key or self.result.thumbnail_key
                         self.result.screenshots += [s.key for s in shots if s.key]
                         yield stream.data("critique", {
                             "round": self.result.critique_rounds,
@@ -340,7 +411,10 @@ class TurnRunner:
             self.result.steps += 1
             yield stream.start_step()
 
-            call_step = ModelStep(messages, tools.schemas_for(self.backend, self.images), endpoint)
+            # Once the picture budget is spent the tool goes away: a refused
+            # call still costs a step, and the model keeps trying otherwise.
+            images = self.images if (self.images is not None and self.images.left > 0) else None
+            call_step = ModelStep(messages, tools.schemas_for(self.backend, images), endpoint)
             async for part in call_step.run():
                 yield part
             if call_step.failed is not None:
@@ -353,12 +427,28 @@ class TurnRunner:
             if not calls:
                 messages.append({"role": "assistant", "content": text})
                 yield stream.finish_step()
+                if nudges_left > 0 and not text.strip():
+                    # Nothing visible and no tool call: a reply that was
+                    # dropped somewhere (reasoning, a parse failure). Ask
+                    # for it again rather than calling that an answer.
+                    nudges_left -= 1
+                    messages.append({"role": "user", "content": BLANK_NUDGE})
+                    continue
                 if nudges_left > 0 and _announces_more_work(text):
                     # "Let me build the pages." with no tool call is not the
                     # end of the turn; tell the model to go on.
                     nudges_left -= 1
                     messages.append({"role": "user", "content": CONTINUE_NUDGE})
                     continue
+                if first_build and not self.result.touched and review_deadline is None:
+                    # A first build that wrote nothing is not done, whatever
+                    # the model says. One push, then the fallback.
+                    if nudges_left > 0:
+                        nudges_left -= 1
+                        messages.append({"role": "user", "content": BUILD_NUDGE})
+                        continue
+                    self.result.reason = NO_CHANGES
+                    return
                 self.result.reason = ANSWERED
                 if completion_left > 0 and self.result.touched:
                     # Content before looks: is the whole spec there?
@@ -387,6 +477,7 @@ class TurnRunner:
                         f"{self.message_id}-r{self.result.critique_rounds + 1}")
                     if shots:
                         self.result.critique_rounds += 1
+                        self.result.thumbnail_key = shots[0].key or self.result.thumbnail_key
                         self.result.screenshots += [s.key for s in shots if s.key]
                         yield stream.data("critique", {
                             "round": self.result.critique_rounds,
@@ -416,6 +507,7 @@ class TurnRunner:
             # Pictures take a minute each and do not touch the code: a step
             # that asks for several gets them all at once.
             pre: dict[str, tools.Outcome] = {}
+            retry_call: tuple[str, str, str] | None = None
             image_calls = [c for c in calls if c["name"] == "generate_image" and not c.get("error")]
             if len(image_calls) > 1:
                 yield stream.data("status", {"text": f"Making {len(image_calls)} pictures"})
@@ -439,6 +531,9 @@ class TurnRunner:
                     content = f"error: {call['error']}. Call the tool again with valid JSON."
                     yield stream.tool_error(call["id"], content)
                     results[call["id"]] = content
+                    hint = _path_hint(call["error"])
+                    self.result.failed_tools.append(f"{call['name']}{' ' + hint if hint else ''}")
+                    retry_call = (call["name"], hint, call["error"])
                     continue
                 outcome = pre.get(call["id"]) or await tools.execute(
                     call["name"], call["arguments"], self.sandbox, self.backend, self.images,
@@ -466,6 +561,14 @@ class TurnRunner:
             for call in calls:
                 messages.append({"role": "tool", "tool_call_id": call["id"],
                                  "name": call["name"], "content": results.get(call["id"], "")})
+            if retry_call is not None:
+                # A write that never happened poisons every step after it;
+                # insist on the redo before anything else.
+                name, hint, err = retry_call
+                messages.append({"role": "user", "content": (
+                    f"Your {name} call{' for ' + hint if hint else ''} could not be parsed "
+                    f"({err[:120]}). Make that exact call again now with valid JSON, before "
+                    "anything else; keep the content shorter if it was very long.")})
             yield stream.finish_step()
             if self.keepalive is not None:
                 try:
@@ -512,36 +615,91 @@ def _exhausted_message(reason: str) -> str:
     if reason == TYPECHECK_STRIKES:
         return ("I could not get the code to typecheck cleanly this turn. The "
                 "preview may show an error; tell me what you see and I will fix it.")
+    if reason == NO_CHANGES:
+        return ("I did not manage to write any files this turn. Send \"build it\" again "
+                "and I will start with the files.")
     return ("I ran out of steps before finishing. Send another message to "
             "continue from here.")
 
 
+#: The end-of-stream marker inside a feed (the SSE terminator is framed
+#: by the route).
+FEED_DONE = object()
+
+
+class TurnFeed:
+    """One running turn's output, kept in memory so that the connection
+    that started it and any that attach later (a reload, another tab) see
+    the same parts; the turn itself runs as a task and does not care
+    whether anyone is watching."""
+
+    def __init__(self, project_id: str) -> None:
+        self.project_id = project_id
+        self.started_at = datetime.now(timezone.utc)
+        self.cancel = asyncio.Event()
+        self.parts: list = []
+        self.done = False
+        self.task: asyncio.Task | None = None
+        self._cond = asyncio.Condition()
+
+    async def push(self, part) -> None:
+        async with self._cond:
+            self.parts.append(part)
+            self._cond.notify_all()
+
+    async def close(self) -> None:
+        async with self._cond:
+            self.done = True
+            self._cond.notify_all()
+
+    async def follow(self, start: int = 0):
+        """Every part from `start`, then new ones as they land, until the
+        feed closes. Safe to call from any number of readers."""
+        i = start
+        while True:
+            async with self._cond:
+                while i >= len(self.parts) and not self.done:
+                    await self._cond.wait()
+                if i >= len(self.parts) and self.done:
+                    return
+                part = self.parts[i]
+            i += 1
+            yield part
+
+
 class TurnRegistry:
-    """Which projects have a turn in flight in this process, and the cancel
-    flag for each. One turn per project at a time."""
+    """Which projects have a turn in flight in this process, with the feed
+    each one writes to. One turn per project at a time."""
 
     def __init__(self) -> None:
-        self._events: dict[str, asyncio.Event] = {}
+        self._feeds: dict[str, TurnFeed] = {}
 
-    def start(self, project_id: str) -> asyncio.Event | None:
-        if project_id in self._events:
+    def start(self, project_id: str) -> TurnFeed | None:
+        if project_id in self._feeds:
             return None
-        event = asyncio.Event()
-        self._events[project_id] = event
-        return event
+        feed = TurnFeed(project_id)
+        self._feeds[project_id] = feed
+        return feed
+
+    def get(self, project_id: str) -> TurnFeed | None:
+        return self._feeds.get(project_id)
 
     def finish(self, project_id: str) -> None:
-        self._events.pop(project_id, None)
+        self._feeds.pop(project_id, None)
 
     def cancel(self, project_id: str) -> bool:
-        event = self._events.get(project_id)
-        if event is None:
+        feed = self._feeds.get(project_id)
+        if feed is None:
             return False
-        event.set()
+        feed.cancel.set()
         return True
 
     def running(self, project_id: str) -> bool:
-        return project_id in self._events
+        return project_id in self._feeds
+
+    def started_at(self, project_id: str):
+        feed = self._feeds.get(project_id)
+        return feed.started_at if feed else None
 
 
 turns = TurnRegistry()

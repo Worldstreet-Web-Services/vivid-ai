@@ -1,5 +1,6 @@
 from fastapi import APIRouter
 
+from app.api.routes.analytics import router as analytics_router
 from app.api.routes.artifacts import router as artifacts_router
 from app.api.routes.attachments import router as attachments_router
 from app.api.routes.browser import router as browser_router
@@ -16,6 +17,7 @@ from app.api.routes.tools import router as tools_router
 
 api_router = APIRouter()
 api_router.include_router(health_router)
+api_router.include_router(analytics_router)
 api_router.include_router(auth_router)
 api_router.include_router(keys_router)
 api_router.include_router(chats_router)

@@ -149,6 +149,26 @@ def maps_block(provider: str | None) -> str:
     return "## Maps skill\n" + text if text else ""
 
 
+_MOTION_RECIPES = {"landing", "platform", "portfolio", "shop"}
+_MOTION_WORDS = ("animat", "motion", "parallax", "gsap", "framer", "shader", "scroll effect",
+                 "transition", "hover effect", "sparkle", "glitter", "grain")
+
+
+def motion_block(recipe: str | None, user_text: str = "") -> str:
+    """The motion skill for pages that sell (the recipes with a hero) or for
+    any request that asks for animation."""
+    if not settings.BUILDER_MOTION_SKILL:
+        return ""
+    low = (user_text or "").lower()
+    if recipe not in _MOTION_RECIPES and not any(w in low for w in _MOTION_WORDS):
+        return ""
+    text = _read("motion/SKILL.md")
+    if not text:
+        return ""
+    patterns = _read("motion/references/patterns.md")
+    return "## Motion skill\n" + text + ("\n\n" + patterns if patterns else "")
+
+
 def ui_block(spec_md: str | None, user_text: str = "",
              payments: str | None = None, backend: bool = False,
              recipe: str | None = None, maps: str | None = None) -> str:
@@ -158,6 +178,7 @@ def ui_block(spec_md: str | None, user_text: str = "",
     first because the recipe names the sections the copy fills; app logic
     comes before payments because the payments flow builds on its orders."""
     blocks = (design_block(spec_md, user_text, recipe), copy_block(),
+              motion_block(recipe, user_text),
               fullstack_block(backend), payments_block(payments), maps_block(maps))
     return "\n\n".join(b for b in blocks if b)
 

@@ -10,7 +10,8 @@ class Settings(BaseSettings):
     APP_NAME: str = "Vivid AI"
     APP_VERSION: str = "0.1.0"
     ENV: str = "development"
-    CORS_ORIGINS: list[str] = ["http://localhost:5173", "http://localhost:3000"]
+    CORS_ORIGINS: list[str] = ["http://localhost:5173", "http://localhost:3000",
+                               "http://localhost:3001"]
 
     # Infra
     DATABASE_URL: str = "postgresql+asyncpg://vivid:vivid@localhost:5432/vivid"
@@ -304,6 +305,8 @@ class Settings(BaseSettings):
     BUILDER_BUILD_MAX_STEPS: int = 40
     # Once, when a first build reaches the cap while still typecheck-clean.
     BUILDER_BUILD_EXTENSION_STEPS: int = 20
+    # The same for an edit turn that is still writing clean files at its cap.
+    BUILDER_EDIT_EXTENSION_STEPS: int = 15
     # Seconds allowed for one file write into the sandbox (images are ~1 MB).
     BUILDER_SANDBOX_WRITE_TIMEOUT: float = 120.0
     # After a first build answers, one review compares the app with the spec
@@ -422,6 +425,11 @@ class Settings(BaseSettings):
     # The app-logic skill (accounts, roles and policies, data, lifecycles,
     # edge functions) rides with every turn of a project that has Supabase.
     BUILDER_FULLSTACK_SKILL: bool = True
+    # Motion (GSAP, Framer Motion, parallax, shaders) for pages with a hero
+    # and for any request about animation.
+    BUILDER_MOTION_SKILL: bool = True
+    # Pageviews accepted per visitor address per project per minute.
+    BUILDER_ANALYTICS_PER_MINUTE: int = 60
     # After a build or edit turn that changed UI, screenshot the page at
     # desktop and phone widths and let the model critique and fix it.
     BUILDER_DESIGN_CRITIQUE: bool = True

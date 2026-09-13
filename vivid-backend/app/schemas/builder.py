@@ -32,6 +32,11 @@ class ProjectOut(BaseModel):
     fullstack: bool = False
     recipe: str | None = None
     published_url: str | None
+    #: "running" while a turn is in flight in the backend, else "idle".
+    turn_status: str = "idle"
+    turn_started_at: datetime | None = None
+    #: The latest desktop screenshot from the critique, a time-limited URL.
+    thumbnail_url: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -60,7 +65,12 @@ class PreviewOut(BaseModel):
 
 class FileOut(BaseModel):
     path: str
+    #: Text files: the content. Binary files: "" with `binary` true and the
+    #: bytes in `content_base64`.
     content: str
+    binary: bool = False
+    content_base64: str | None = None
+    content_type: str | None = None
 
 
 class FilesOut(BaseModel):
@@ -90,6 +100,17 @@ class UsageOut(BaseModel):
     storage_bytes: int
     cost_usd: float
     by_kind: dict
+
+
+class AnalyticsOut(BaseModel):
+    days: int
+    pageviews: int
+    visitors: int
+    by_day: list[dict]
+    top_pages: list[dict]
+    referrers: list[dict]
+    devices: list[dict]
+    countries: list[dict]
 
 
 class SupabaseLinkIn(BaseModel):

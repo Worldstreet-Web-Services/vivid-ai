@@ -101,6 +101,16 @@ on a 390px screen, without zooming.
 - The owner's pages look like a tool (dense, tables, forms); the customer's pages look
   like a shop. Do not mix the two styles.
 
+## Every site ships with
+- A favicon: when a logo mark is generated it is also saved as /favicon.png and linked from
+  index.html automatically; when the user uploaded a logo, write `public/favicon.png` from
+  it (run_command with the file copied) and make sure index.html has
+  `<link rel="icon" type="image/png" href="/favicon.png" />` and an apple-touch-icon link.
+  A site with the Vite default icon is unfinished.
+- A real `<title>` ("Kicks Lagos · Sneakers in Surulere"), a `<meta name="description">`
+  of one sentence, `<meta name="theme-color">` in the primary colour, and Open Graph
+  title, description and image (the hero picture) so a shared link shows a card.
+
 ## Navigation
 - Header: logo left, up to five links, one primary action right. On phones the links
   collapse into a menu button (use the dropdown-menu component); the primary action stays.

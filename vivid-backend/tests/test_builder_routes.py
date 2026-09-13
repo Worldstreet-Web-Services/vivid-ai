@@ -281,7 +281,16 @@ def test_preview_and_files(client, fake_manager):
     assert client.get(f"/v1/builder/projects/{pid}/files").json() == {
         "files": ["package.json", "src/App.tsx", "src/main.tsx"]}
     assert client.get(f"/v1/builder/projects/{pid}/files/src/App.tsx").json() == {
-        "path": "src/App.tsx", "content": "x"}
+        "path": "src/App.tsx", "content": "x", "binary": False, "content_base64": None,
+        "content_type": "text/plain"}
+    fake_manager.sandbox.blobs["public/uploads/a.png"] = b"\x89PNG\r\n\x1a\n\x00binary"
+    r = client.get(f"/v1/builder/projects/{pid}/files/public/uploads/a.png").json()
+    assert r["binary"] is True and r["content"] == "" and r["content_type"] == "image/png"
+    import base64 as _b64
+    assert _b64.b64decode(r["content_base64"]).startswith(b"\x89PNG")
+    raw = client.get(f"/v1/builder/projects/{pid}/files/public/uploads/a.png?raw=1")
+    assert raw.status_code == 200 and raw.headers["content-type"].startswith("image/png")
+    assert raw.content.startswith(b"\x89PNG")
     assert client.get(f"/v1/builder/projects/{pid}/files/src/nope.tsx").status_code == 404
     r = client.get(f"/v1/builder/projects/{pid}/files/../etc/passwd")
     assert r.status_code in (400, 404)
@@ -370,6 +379,10 @@ def test_plan_mode_then_build(client, monkeypatch, fake_manager):
                  "arguments": {"markdown": SPEC, "fullstack": True, "recipe": "booking"}}]}
         elif "ask_user" in names:
             yield {"type": "token", "text": "Spec ready; edit it or build."}
+        elif not any(m.get("role") == "tool" for m in messages):
+            yield {"type": "tool_calls", "calls": [
+                {"id": "w1", "name": "write_file", "error": None,
+                 "arguments": {"path": "src/Home.tsx", "content": "export {}"}}]}
         else:
             yield {"type": "token", "text": "Built."}
         yield {"type": "done", "finish_reason": "stop", "usage": {"prompt_tokens": 1, "completion_tokens": 1}}
@@ -394,6 +407,7 @@ def test_plan_mode_then_build(client, monkeypatch, fake_manager):
     assert any(isinstance(p, dict) and p["type"] == "data-spec" for p in parts)
     proj = client.get(f"/v1/builder/projects/{pid}").json()
     assert proj["mode"] == "plan" and proj["spec_md"] == SPEC.strip()
+    assert proj["name"] == "Salon"                              # a typed name is kept
     assert proj["fullstack"] is True                            # the plan asked for accounts
     assert proj["recipe"] == "booking"
     assert client.patch(f"/v1/builder/projects/{pid}", json={"fullstack": False}).json()["fullstack"] is False
@@ -416,7 +430,7 @@ def test_plan_mode_then_build(client, monkeypatch, fake_manager):
     assert fake_manager.sandbox.files["spec.md"] == edited       # and written to the sandbox
     assert not fake_manager.fresh
     u = client.get(f"/v1/builder/projects/{pid}/usage").json()
-    assert u["model_calls"] == 5                                 # brief + three plan calls + one build call
+    assert u["model_calls"] == 6                                 # brief + three plan calls + two build calls
 
 
 def test_skip_plan_starts_in_build_mode(client, monkeypatch, fake_manager):
@@ -871,3 +885,89 @@ def test_google_maps_connector_and_project_maps(client, monkeypatch, fake_manage
     assert "## Maps skill" in seen[-1] and "PlaceAutocomplete" in seen[-1]
     r = client.delete(f"/v1/builder/projects/{pid}/maps")
     assert r.json()["maps_provider"] == "none"
+
+
+def test_turn_outlives_the_connection_and_can_be_reattached(client, monkeypatch, fake_manager):
+    """The turn is a task on a feed: the project reports "running" with a
+    start time while the feed exists, /chat/stream follows the feed, and
+    when the turn ends the message is stored and the stream answers 204.
+    (The test client cannot hold a stream open mid-request, so the
+    mid-turn state is set up through the registry.)"""
+    async def stream_chat(messages, tools, max_tokens=None, endpoint=None, temperature=None):
+        yield {"type": "token", "text": "Finished after you left."}
+        yield {"type": "tool_calls", "calls": [
+            {"id": "w1", "name": "write_file", "error": None,
+             "arguments": {"path": "src/Late.tsx", "content": "export {}"}}]}
+        yield {"type": "done", "finish_reason": "stop", "usage": None}
+    monkeypatch.setattr(code_llm, "stream_chat", stream_chat)
+
+    pid = client.post("/v1/builder/projects", json={"skip_plan": True}).json()["id"]
+    feed = builder_routes.turns.start(pid)                       # a turn in flight
+    proj = client.get(f"/v1/builder/projects/{pid}").json()
+    assert proj["turn_status"] == "running" and proj["turn_started_at"]
+    assert client.get("/v1/builder/projects").json()[0]["turn_status"] == "running"
+    import anyio
+    anyio.run(feed.push, {"type": "start", "messageId": "m1"})
+    anyio.run(feed.push, {"type": "text-delta", "id": "t", "delta": "hi"})
+    anyio.run(feed.push, builder_routes.FEED_DONE)
+    anyio.run(feed.close)
+    with client.stream("GET", f"/v1/builder/projects/{pid}/chat/stream") as r:
+        parts = sse_parts("".join(r.iter_text()))
+    assert [p["type"] for p in parts[:2]] == ["start", "text-delta"] and parts[-1] == "[DONE]"
+    builder_routes.turns.finish(pid)
+    assert client.get(f"/v1/builder/projects/{pid}").json()["turn_status"] == "idle"
+    assert client.get(f"/v1/builder/projects/{pid}/chat/stream").status_code == 204
+
+    # A real turn end to end: stored before [DONE], nothing left running.
+    parts = sse_parts(client.post(f"/v1/builder/projects/{pid}/chat", json={"text": "go"}).text)
+    assert parts[-1] == "[DONE]" and fake_manager.sandbox.files["src/Late.tsx"] == "export {}"
+    msgs = client.get(f"/v1/builder/projects/{pid}/messages").json()
+    assert [m["role"] for m in msgs] == ["user", "assistant"]
+    assert client.get(f"/v1/builder/projects/{pid}").json()["turn_status"] == "idle"
+
+
+def test_pageviews_are_collected_publicly_and_rolled_up(client, monkeypatch, fake_manager):
+    """A published site posts plain-text pageviews with no auth; the owner
+    reads totals, days, pages, referrers, devices and countries."""
+    from app.api.routes.analytics import router as analytics_router
+    client.app.include_router(analytics_router, prefix="/v1")
+    pid = client.post("/v1/builder/projects", json={"skip_plan": True}).json()["id"]
+
+    def hit(path, ref="", ua="Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)", ip="1.1.1.1", country="NG"):
+        return client.post(f"/v1/a/{pid}", content=json.dumps({"p": path, "r": ref}).encode(),
+                           headers={"content-type": "text/plain", "user-agent": ua,
+                                    "x-forwarded-for": ip, "cf-ipcountry": country})
+    r = hit("/")
+    assert r.status_code == 204 and r.headers["access-control-allow-origin"] == "*"
+    assert client.options(f"/v1/a/{pid}").status_code == 204
+    hit("/shop", ref="https://www.instagram.com/p/abc")
+    hit("/shop", ip="2.2.2.2", ua="Mozilla/5.0 (Macintosh)", country="GH")
+    assert client.post("/v1/a/not-a-project", content=b"{}", headers={"content-type": "text/plain"}).status_code == 204
+    assert client.post(f"/v1/a/{pid}", content=b"not json", headers={"content-type": "text/plain"}).status_code == 204
+
+    a = client.get(f"/v1/builder/projects/{pid}/analytics?days=7").json()
+    assert a["days"] == 7 and a["pageviews"] == 3 and a["visitors"] == 2
+    assert a["top_pages"][0] == {"key": "/shop", "count": 2}
+    assert {"key": "www.instagram.com", "count": 1} in a["referrers"] and {"key": "direct", "count": 2} in a["referrers"]
+    assert a["devices"] == [{"key": "mobile", "count": 2}, {"key": "desktop", "count": 1}]
+    assert a["countries"][0] == {"key": "NG", "count": 2}
+    assert len(a["by_day"]) == 1 and a["by_day"][0]["visitors"] == 2
+    assert client.get(f"/v1/builder/projects/{pid}/analytics").status_code == 200
+
+
+def test_a_placeholder_name_is_replaced_by_the_spec_title(client, monkeypatch, fake_manager):
+    from tests.test_builder_planning import SPEC
+    async def stream_chat(messages, tools, max_tokens=None, endpoint=None, temperature=None):
+        names = [t["function"]["name"] for t in tools]
+        if not names:
+            yield {"type": "token", "text": "## What it is\n**Glow Salon** is a booking app."}
+        else:
+            yield {"type": "tool_calls", "calls": [
+                {"id": "c1", "name": "write_spec", "error": None,
+                 "arguments": {"markdown": "# Glow Salon — bookings\n" + SPEC.split("\n", 1)[1]}}]}
+        yield {"type": "done", "finish_reason": "stop", "usage": None}
+    monkeypatch.setattr(code_llm, "stream_chat", stream_chat)
+    pid = client.post("/v1/builder/projects", json={}).json()["id"]
+    assert client.get(f"/v1/builder/projects/{pid}").json()["name"] == "Untitled app"
+    client.post(f"/v1/builder/projects/{pid}/chat", json={"text": "a salon booking app"})
+    assert client.get(f"/v1/builder/projects/{pid}").json()["name"] == "Glow Salon"
