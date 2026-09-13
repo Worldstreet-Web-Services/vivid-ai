@@ -34,6 +34,7 @@ class ProjectOut(BaseModel):
     fullstack: bool = False
     recipe: str | None = None
     published_url: str | None
+    published_at: datetime | None = None
     #: "running" while a turn is in flight in the backend, else "idle".
     turn_status: str = "idle"
     turn_started_at: datetime | None = None

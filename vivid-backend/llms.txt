@@ -34,13 +34,17 @@ Per project POST/DELETE /builder/projects/{id}/supabase · POST/DELETE .../payme
 Publish     POST /builder/projects/{id}/publish · GET .../publishes · GET .../publishes/{publish_id}
 Usage       GET /builder/projects/{id}/usage · GET /builder/projects/{id}/analytics?days=30
 Public      POST /a/{project_id} (pageview reporter used by published sites; no auth)
-Health      GET /health (builder block: models, sandbox, storage, secrets, images, publish, supabase_oauth, skills)
+Health      GET /health (builder block: models, sandbox, storage, secrets, images, publish, supabase_oauth, skills, recipes, chain)
 
-CORS: browsers may call every route directly, including the SSE stream, from
-the origins in the backend's CORS_ORIGINS setting (dev default: localhost
-5173, 3000, 3001). Ask for your production origin to be added; do not relay
-the stream through a serverless route, its response cap is shorter than a
-first build.
+CORS: the allow-list is the deployment's CORS_ORIGINS setting (in the
+server's app.env; the code default of localhost 5173, 3000 and 3001 applies
+only where the variable is unset). Production lists only the origins the
+operator put there, so until yours is added a browser fetch fails with
+"Failed to fetch" and only a same-origin relay works. Ask for your dev and
+production origins to be added, then call every route directly, including
+the SSE stream; a serverless relay's response cap is shorter than a first
+build. Check with: OPTIONS any /v1 route with your Origin header and look
+for access-control-allow-origin.
 
 ------------------------------------------------------------------------
 ## 0. Authentication (Decane sign-in, then Vivid tokens)
@@ -74,8 +78,9 @@ Step 3, use and refresh:
 
 API keys, for scripts and CLIs: POST /keys {name} with a session bearer
 -> 201 {id, name, prefix, key, created_at}; the full key is in that
-response only. GET /keys lists {id, name, prefix, created_at, last_used_at};
-DELETE /keys/{id} revokes. A key goes in Authorization: Bearer vivid_... on
+response only. GET /keys lists {id, name, prefix, created_at, last_used_at,
+revoked_at}; revoked keys are omitted unless ?include_revoked=1 (they carry
+revoked_at). DELETE /keys/{id} revokes; the key answers 401 from then on. A key goes in Authorization: Bearer vivid_... on
 every /v1 route exactly like an access token, and never expires.
   GET /auth/me -> the user; PATCH /auth/me {name} renames.
 
@@ -147,8 +152,10 @@ Project:
   turn_started_at: string | null,    // when it started; show "building for 6 min"
   thumbnail_url: string | null,      // latest desktop screenshot, a 7-day signed URL; for the project card
   fullstack: boolean,             // accounts + server-side data were asked for (plan sets it)
-  recipe: string | null,          // design recipe the plan chose (shop, booking, platform, ...)
-  published_url: string | null,
+  recipe: string | null,          // design recipe the plan chose; the list is GET /health builder.recipes
+                                  // (shop, booking, restaurant, saas, wallet, nft-drop, ... 40+, files in the backend)
+  published_url: string | null,     // set by the first successful publish only; null until then
+  published_at: string | null,      // when that publish went live; "is live" = published_at != null
   created_at, updated_at
 }
 
@@ -468,6 +475,7 @@ user asks for a dApp, token, NFT, escrow, vote, or anything "web3" or
 "decentralised" (write_spec `onchain`), or the client turns it on:
 
   POST   /builder/projects/{id}/chain         -> Project {chain: "ark-devnet", deployer_address}
+         (a wallet app also uses this: it needs the chain values but deploys nothing)
          creates the project's deployer wallet and funds it from the devnet faucet
   POST   /builder/projects/{id}/chain/faucet  -> Project  (top the deployer up; 502 with the faucet's reason if refused)
   DELETE /builder/projects/{id}/chain         -> Project {chain: "none"}

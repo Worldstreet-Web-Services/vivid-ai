@@ -151,9 +151,9 @@ def test_revoking_stops_the_key_and_keeps_the_record(client):
     key_id = client.post("/v1/keys", json={"name": "leaked"}).json()["id"]
     assert client.delete(f"/v1/keys/{key_id}").status_code == 204
 
-    listed = client.get("/v1/keys").json()
-    assert len(listed) == 1, "a revoked key stays listed, so its history is answerable"
-    assert listed[0]["revoked_at"] is not None
+    assert client.get("/v1/keys").json() == [], "a revoked key leaves the list, or revoking looks failed"
+    listed = client.get("/v1/keys?include_revoked=1").json()
+    assert len(listed) == 1 and listed[0]["revoked_at"] is not None   # the audit trail on request
 
 
 def test_revoking_twice_is_not_an_error(client):

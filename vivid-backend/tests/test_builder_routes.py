@@ -613,7 +613,7 @@ def test_supabase_oauth_routes(client, maker, monkeypatch):
     assert client.get("/v1/connectors").json()[0]["projects"][0]["ref"] == "refone"
 
 
-def test_publish_job_updates_row_and_project(client, monkeypatch, fake_manager):
+def test_publish_job_updates_row_and_project(client, monkeypatch, fake_manager, fake_blob):
     """POST publish answers 202 with a pending row; the job builds in the
     sandbox, uploads, and the row and project carry the live URL."""
     import asyncio
@@ -647,6 +647,17 @@ def test_publish_job_updates_row_and_project(client, monkeypatch, fake_manager):
     sb.files["dist/assets/a.js"] = "1"
 
     pid = client.post("/v1/builder/projects", json={"name": "Todo App", "skip_plan": True}).json()["id"]
+    # Nothing built yet: no URL for an empty template.
+    r = client.post(f"/v1/builder/projects/{pid}/publish")
+    assert r.status_code == 409 and r.json()["error"]["code"] == "nothing_to_publish"
+
+    async def stream_chat(messages, tools, max_tokens=None, endpoint=None, temperature=None):
+        yield {"type": "tool_calls", "calls": [{"id": "w1", "name": "write_file", "error": None,
+                                                "arguments": {"path": "src/Page.tsx", "content": "export {}"}}]}
+        yield {"type": "done", "finish_reason": "stop", "usage": None}
+    monkeypatch.setattr(code_llm, "stream_chat", stream_chat)
+    client.post(f"/v1/builder/projects/{pid}/chat", json={"text": "build"})
+    assert client.get(f"/v1/builder/projects/{pid}").json()["published_at"] is None
     r = client.post(f"/v1/builder/projects/{pid}/publish")
     assert r.status_code == 202 and r.json()["status"] == "pending"
     pub_id = r.json()["id"]
@@ -664,7 +675,8 @@ def test_publish_job_updates_row_and_project(client, monkeypatch, fake_manager):
     alias = publish_mod.alias_for("Todo App", pid)
     assert row["url"] == f"https://{alias}.vivid-apps.pages.dev"
     assert deployed == [(["assets/a.js", "index.html"], alias)]
-    assert client.get(f"/v1/builder/projects/{pid}").json()["published_url"] == row["url"]
+    proj = client.get(f"/v1/builder/projects/{pid}").json()
+    assert proj["published_url"] == row["url"] and proj["published_at"] is not None
     assert [p["id"] for p in client.get(f"/v1/builder/projects/{pid}/publishes").json()] == [pub_id]
     assert any("vite build" in c for c in sb.commands)
 

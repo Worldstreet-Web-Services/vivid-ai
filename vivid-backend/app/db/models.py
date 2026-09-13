@@ -287,6 +287,7 @@ class BuilderProject(Base):
     #: The design recipe the plan chose (a file under skills/design).
     recipe: Mapped[str | None] = mapped_column(String(32), default=None)
     published_url: Mapped[str | None] = mapped_column(String(512), default=None)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     #: Files touched in the last two turns, newest turn first, for the
     #: context block. A list of lists of project-relative paths.
     recent_files: Mapped[list | None] = mapped_column(JSONB, default=None)
