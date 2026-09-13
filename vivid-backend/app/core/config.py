@@ -10,7 +10,8 @@ class Settings(BaseSettings):
     APP_NAME: str = "Vivid AI"
     APP_VERSION: str = "0.1.0"
     ENV: str = "development"
-    CORS_ORIGINS: list[str] = ["http://localhost:5173", "http://localhost:3000"]
+    CORS_ORIGINS: list[str] = ["http://localhost:5173", "http://localhost:3000",
+                               "http://localhost:3001"]
 
     # Infra
     DATABASE_URL: str = "postgresql+asyncpg://vivid:vivid@localhost:5432/vivid"
@@ -424,6 +425,9 @@ class Settings(BaseSettings):
     # The app-logic skill (accounts, roles and policies, data, lifecycles,
     # edge functions) rides with every turn of a project that has Supabase.
     BUILDER_FULLSTACK_SKILL: bool = True
+    # Motion (GSAP, Framer Motion, parallax, shaders) for pages with a hero
+    # and for any request about animation.
+    BUILDER_MOTION_SKILL: bool = True
     # After a build or edit turn that changed UI, screenshot the page at
     # desktop and phone widths and let the model critique and fix it.
     BUILDER_DESIGN_CRITIQUE: bool = True

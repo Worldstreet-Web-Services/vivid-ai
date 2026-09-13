@@ -27,7 +27,7 @@ def env(monkeypatch):
 
 
 def test_recipes_come_from_disk_and_the_block_carries_the_chosen_one():
-    assert skills.available() == ["copy", "design", "fullstack", "maps", "payments"]
+    assert skills.available() == ["copy", "design", "fullstack", "maps", "motion", "payments"]
     names = skills.recipe_names()
     assert names == ["booking", "dashboard", "landing", "platform", "portfolio", "shop"]
     menu = skills.recipe_menu()
@@ -86,7 +86,7 @@ def test_fullstack_skill_only_with_a_backend(monkeypatch):
 
 
 def test_copy_skill_rides_with_the_design_skill():
-    assert skills.available() == ["copy", "design", "fullstack", "maps", "payments"]
+    assert skills.available() == ["copy", "design", "fullstack", "maps", "motion", "payments"]
     block = skills.ui_block("# Spec\nA salon booking app", "", recipe="booking")
     assert "## Design skill" in block and "## Copy skill" in block
     assert block.index("## Design skill") < block.index("## Copy skill")
@@ -521,3 +521,14 @@ def test_maps_skill_only_with_a_key():
                          recipe="platform", maps="google")
     assert ui.index("## Payments skill") < ui.index("## Maps skill")
     assert "## Maps skill" not in skills.ui_block("x", "")
+
+
+def test_motion_skill_for_hero_pages_and_animation_requests(monkeypatch):
+    assert skills.motion_block("platform").startswith("## Motion skill\n# Motion and polish")
+    assert "ScrollTrigger" in skills.motion_block("landing") and "ShaderBackdrop" in skills.motion_block("shop")
+    assert skills.motion_block("dashboard") == "" and skills.motion_block(None) == ""
+    assert "## Motion skill" in skills.motion_block("dashboard", "add a parallax hero")
+    ui = skills.ui_block("# Spec", "", recipe="platform")
+    assert ui.index("## Copy skill") < ui.index("## Motion skill")
+    monkeypatch.setattr(settings, "BUILDER_MOTION_SKILL", False)
+    assert skills.motion_block("platform") == ""

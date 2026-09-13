@@ -579,3 +579,45 @@ other people's accounts). Changes:
   Chopwell repair turns); the inherited conversation is the fix. The
   laptop's uplink to E2B and OpenRouter was the other cost (resets,
   timeouts); the server does not have it.
+
+## 16. The frontend dev's twelve issues, and motion (2026-09-13)
+
+The Next.js client's integration report (kept in the thread) mapped to:
+
+1. A disconnected stream lost the whole turn. Cause: the turn ran inside
+   the response generator, so a client abort cancelled the generator
+   before persistence, while the sandbox work already queued kept going.
+   Fix: the turn is an asyncio task writing to a `TurnFeed` (loop.py);
+   the response and any later reader follow the feed; persistence happens
+   in the task. A cancel is a flag the task reads.
+2. `Project.turn_status` / `turn_started_at` from the registry, and
+   `GET .../chat/stream` to reattach (replay + follow, 204 when idle).
+3. CORS: `CORS_ORIGINS` setting; localhost:3001 added to the dev default;
+   production origins go in app.env on the server.
+4. `Project.thumbnail_url`: the critique's desktop shot key is stored on
+   the project (`thumbnail_key`), presented as a 7-day signed URL.
+5. Binary files: `GET .../files/{path}` marks binaries (`binary`,
+   `content_base64`, `content_type`) and `?raw=1` serves the bytes.
+6. `POST /keys` documented in the guide's new endpoint index and §0.
+7. Supabase OAuth: config only (client id/secret on the server).
+8. Malformed tool arguments: the loop now asks the model to redo that exact
+   call before anything else, records `failed_tools` ("write_file
+   src/pages/Deal.tsx") and puts it in `data-usage`.
+9. `data-usage.ok` plus the closed set of reasons, documented.
+10. `/auth/refresh` ignores a stale bearer and answers `refresh_expired`.
+11. Endpoint index at the top of llms.txt; maps and the full-stack flag are
+    in it.
+12. A first build that wrote no files: a blank reply is nudged, a "done"
+    with no writes is pushed once to build, then `no_changes` (a retryable
+    outcome, so the fallback takes it with the inherited conversation);
+    and no snapshot is taken for a turn that changed nothing.
+Small notes fixed in the guide: wire vs folded part names, POST /build
+does not start a turn, the brief arrives twice, the vivid:error snippet
+checks `event.origin`.
+
+Motion: `skills/motion/SKILL.md` (GSAP + ScrollTrigger, Framer Motion
+entrances and hover language, parallax layers, grain, glow, a WebGL shader
+backdrop, glitter accents, font loading with alternates, reduced-motion
+and performance rules), attached for landing, platform, portfolio and
+shop recipes or any request that mentions animation; `gsap` and `motion`
+added to the template's package.json for the next template build.

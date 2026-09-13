@@ -275,6 +275,8 @@ class BuilderProject(Base):
     payments_provider: Mapped[str] = mapped_column(String(16), default="none")
     #: "google" when the project uses the user's Google Maps key.
     maps_provider: Mapped[str] = mapped_column(String(16), default="none")
+    #: Storage key of the latest desktop screenshot (the project card).
+    thumbnail_key: Mapped[str | None] = mapped_column(String(512), default=None)
     # Accounts, roles and server-side data are built only when asked for:
     # set by the plan (write_spec) or the client, never assumed.
     fullstack: Mapped[bool] = mapped_column(Boolean, default=False)

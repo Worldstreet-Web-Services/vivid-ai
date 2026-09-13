@@ -37,18 +37,21 @@ One turn per project at a time (409 otherwise). The stream is the contract
 for any client: see docs/builder.md.
 """
 import asyncio
+import pathlib
+import mimetypes
+import base64
 import logging
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, File, Request, UploadFile
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
 from app.builder import (assets, blob, images, pgdirect, planning, publish, routing, secrets, skills,
                          snapshots, stream, supabase, tools, usage)
-from app.builder.loop import ModelCall, TurnRunner, turns
+from app.builder.loop import FEED_DONE, ModelCall, TurnRunner, turns
 from app.builder.planning import PlanRunner
 from app.builder.sandbox.base import PathError, SandboxError, safe_path
 from app.builder.sandbox.manager import manager
@@ -97,19 +100,30 @@ async def create_project(body: ProjectCreate, user: User = Depends(get_current_u
     return project
 
 
+def _present(project: BuilderProject) -> BuilderProject:
+    """Per-process state the row does not carry: whether a turn is running
+    here, and a time-limited URL for the latest screenshot."""
+    running = turns.running(project.id)
+    project.turn_status = "running" if running else "idle"
+    project.turn_started_at = turns.started_at(project.id) if running else None
+    project.thumbnail_url = (blob.presigned_url(project.thumbnail_key, expires_in=7 * 24 * 3600)
+                             if project.thumbnail_key and blob.configured() else None)
+    return project
+
+
 @router.get("/projects", response_model=list[ProjectOut])
 async def list_projects(user: User = Depends(get_current_user),
                         db: AsyncSession = Depends(get_db)):
     rows = await db.execute(select(BuilderProject)
                             .where(BuilderProject.owner_id == user.id)
                             .order_by(BuilderProject.updated_at.desc()))
-    return list(rows.scalars())
+    return [_present(p) for p in rows.scalars()]
 
 
 @router.get("/projects/{project_id}", response_model=ProjectOut)
 async def get_project(project_id: str, user: User = Depends(get_current_user),
                       db: AsyncSession = Depends(get_db)):
-    return await _owned(project_id, user, db)
+    return _present(await _owned(project_id, user, db))
 
 
 @router.patch("/projects/{project_id}", response_model=ProjectOut)
@@ -197,9 +211,10 @@ async def chat(project_id: str, body: ChatIn, request: Request,
     history = planning.history_from_parts(stored) if planning_mode else _history(stored)
     stage = routing.stage_for(await _latest_seq(project_id, db))
 
-    cancel = turns.start(project_id)
-    if cancel is None:
+    feed = turns.start(project_id)
+    if feed is None:
         raise APIError(409, "busy", "A turn is already running for this project.")
+    cancel = feed.cancel
 
     user_parts = [{"type": "text", "text": body.text}]
     user_parts += [{"type": "file", "mediaType": "image/*", "url": u} for u in body.images]
@@ -225,7 +240,11 @@ async def chat(project_id: str, body: ChatIn, request: Request,
             if len(plan_images) < planning.MAX_IMAGES:
                 plan_images.append(url)
 
-    async def generate():
+    async def run_turn():
+        """The whole turn, as a task: it outlives the HTTP connection, so a
+        closed tab or a proxy timeout never loses the work or the message.
+        Everything it produces goes to the feed; the response below and any
+        later /chat/stream reader follow the feed."""
         collector = stream.PartsCollector()
         runner = None
         try:
@@ -234,10 +253,10 @@ async def chat(project_id: str, body: ChatIn, request: Request,
                                     assets_block=assets_block)
                 async for part in runner.run():
                     collector.add(part)
-                    yield stream.frame(part)
-                turns.finish(project_id)
+                    await feed.push(part)
                 await _persist_plan_turn(project_id, collector, runner)
-                yield stream.DONE
+                turns.finish(project_id)
+                await feed.push(FEED_DONE)
                 return
             try:
                 sandbox = await _start_sandbox(project_id, redis)
@@ -246,8 +265,9 @@ async def chat(project_id: str, body: ChatIn, request: Request,
                 await assets.sync(sandbox, uploaded)
             except (SandboxError, snapshots.SnapshotError) as e:
                 log.error("sandbox for project %s failed: %s", project_id, e)
-                yield stream.frame(stream.error(
+                await feed.push(stream.error(
                     "The workspace could not be started. Please try again."))
+                turns.finish(project_id)
                 return
             runner = TurnRunner(sandbox, stage, history, body.text, spec_md, recent,
                                 cancelled=cancel.is_set, backend=backend,
@@ -263,25 +283,53 @@ async def chat(project_id: str, body: ChatIn, request: Request,
                                         if images.available() else None))
             async for part in runner.run():
                 collector.add(part)
-                yield stream.frame(part)
+                await feed.push(part)
         except Exception as e:                     # never a half-open stream
             log.exception("builder turn failed for project %s", project_id)
-            yield stream.frame(stream.error(provider.scrub(str(e))))
+            await feed.push(stream.error(provider.scrub(str(e))))
         finally:
             if not planning_mode:
                 # Stored BEFORE the terminator: a client that fetches the
                 # thread the moment it sees [DONE] must find the message.
-                turns.finish(project_id)
                 await manager.touch(project_id)
                 snapshot = await _persist_turn(project_id, collector, runner)
                 if snapshot is not None:
-                    yield stream.frame(stream.data("snapshot", {
+                    await feed.push(stream.data("snapshot", {
                         "id": snapshot.id, "seq": snapshot.seq}))
-                yield stream.DONE
+                turns.finish(project_id)
+                await feed.push(FEED_DONE)
             else:
                 turns.finish(project_id)
+                if not feed.done:
+                    await feed.push(FEED_DONE)
+            await feed.close()
 
-    return StreamingResponse(generate(), media_type=stream.MEDIA_TYPE,
+    feed.task = asyncio.create_task(run_turn())
+    return StreamingResponse(_follow(feed), media_type=stream.MEDIA_TYPE,
+                             headers=stream.HEADERS)
+
+
+async def _follow(feed, start: int = 0):
+    """SSE frames for a feed's parts. Ends when the feed closes; a reader
+    that disconnects just stops reading, the turn keeps going."""
+    async for part in feed.follow(start):
+        if part is FEED_DONE:
+            yield stream.DONE
+            continue
+        yield stream.frame(part)
+
+
+@router.get("/projects/{project_id}/chat/stream")
+async def chat_stream(project_id: str, user: User = Depends(get_current_user),
+                      db: AsyncSession = Depends(get_db)):
+    """Attach to the running turn: every part it has produced so far, then
+    the rest as it goes, ending with [DONE]. 204 when nothing is running
+    (fetch the thread instead)."""
+    await _owned(project_id, user, db)
+    feed = turns.get(project_id)
+    if feed is None:
+        return Response(status_code=204)
+    return StreamingResponse(_follow(feed), media_type=stream.MEDIA_TYPE,
                              headers=stream.HEADERS)
 
 
@@ -306,14 +354,19 @@ async def _persist_turn(project_id: str, collector: stream.PartsCollector,
                 if runner.result.touched:
                     recent = [runner.result.touched] + list(project.recent_files or [])
                     project.recent_files = recent[:RECENT_TURNS]
+                if runner.result.thumbnail_key:
+                    project.thumbnail_key = runner.result.thumbnail_key
                 await usage.record_model(db, project_id, runner.result.calls)
-                try:
-                    snapshot = await snapshots.take(db, runner.sandbox, project,
-                                                    collector.text())
-                except (snapshots.SnapshotError, SandboxError, Exception) as e:
-                    # The message and usage still land; the next turn that
-                    # changes a file snapshots this one's work too.
-                    log.error("snapshot for %s failed: %s", project_id, e)
+                if runner.result.touched:
+                    # A turn that changed nothing gets no version: "saved as
+                    # version 1" of an untouched template misleads.
+                    try:
+                        snapshot = await snapshots.take(db, runner.sandbox, project,
+                                                        collector.text())
+                    except (snapshots.SnapshotError, SandboxError, Exception) as e:
+                        # The message and usage still land; the next turn that
+                        # changes a file snapshots this one's work too.
+                        log.error("snapshot for %s failed: %s", project_id, e)
             await db.commit()
     except Exception as e:
         log.error("could not store the turn for %s: %s", project_id, e)
@@ -770,10 +823,30 @@ async def read_file(project_id: str, path: str, request: Request,
     except PathError as e:
         raise APIError(400, "bad_path", str(e))
     sandbox = await _sandbox(project_id, request)
+    raw = request.query_params.get("raw") in ("1", "true")
     try:
-        return FileOut(path=clean, content=await sandbox.read_file(clean))
+        data = await sandbox.read_bytes(clean)
     except FileNotFoundError:
         raise APIError(404, "not_found", "File not found")
+    binary = _is_binary(clean, data)
+    ctype = mimetypes.guess_type(clean)[0] or ("application/octet-stream" if binary else "text/plain")
+    if raw:
+        return Response(content=data, media_type=ctype)
+    if binary:
+        return FileOut(path=clean, content="", binary=True,
+                       content_base64=base64.b64encode(data).decode(), content_type=ctype)
+    return FileOut(path=clean, content=data.decode("utf-8", errors="replace"),
+                   content_type=ctype)
+
+
+_BINARY_EXT = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".pdf", ".woff", ".woff2",
+               ".ttf", ".otf", ".mp4", ".mp3", ".zip", ".gz", ".tgz"}
+
+
+def _is_binary(path: str, data: bytes) -> bool:
+    if pathlib.Path(path).suffix.lower() in _BINARY_EXT:
+        return True
+    return b"\x00" in data[:8000]
 
 
 async def _start_sandbox(project_id: str, redis):

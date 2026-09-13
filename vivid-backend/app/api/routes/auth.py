@@ -1,4 +1,5 @@
 import jwt as pyjwt
+from app.core.errors import APIError
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -103,11 +104,13 @@ async def update_me(body: ProfileUpdate, user: User = Depends(get_current_user),
 
 @router.post("/refresh", response_model=TokenPairOut)
 async def refresh(body: RefreshRequest, db: AsyncSession = Depends(get_db)):
+    # No bearer is needed here, and a stale one is ignored: only the body's
+    # refresh token counts. `refresh_expired` means "sign in again".
     try:
         user_id = decode_token(body.refresh_token, "refresh")
     except pyjwt.InvalidTokenError:
-        raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
+        raise APIError(401, "refresh_expired", "The refresh token is invalid or expired; sign in again.")
     user = await db.get(User, user_id)
     if user is None:
-        raise HTTPException(status_code=401, detail="Unknown user")
+        raise APIError(401, "refresh_expired", "Unknown user; sign in again.")
     return _pair(user)

@@ -15,6 +15,32 @@ not_configured (503), sandbox_unavailable (503), snapshot_failed (503),
 bad_asset (400), not_found (404).
 
 ------------------------------------------------------------------------
+## Endpoint index (diff your client against this list)
+
+Auth        POST /auth/decane · POST /auth/refresh · GET /auth/me · PATCH /auth/me
+API keys    POST /keys {name} -> {id, name, prefix, key, created_at} (the key only here) · GET /keys · DELETE /keys/{id}
+Projects    POST /builder/projects · GET /builder/projects · GET /builder/projects/{id}
+            PATCH /builder/projects/{id} {name?, spec_md?, fullstack?, recipe?} · DELETE /builder/projects/{id}
+Turns       POST /builder/projects/{id}/chat (SSE) · GET /builder/projects/{id}/chat/stream (SSE, attach to a running turn)
+            POST /builder/projects/{id}/cancel · POST /builder/projects/{id}/build (flip to build mode; does NOT start a turn)
+Thread      GET /builder/projects/{id}/messages
+Preview     GET /builder/projects/{id}/preview · GET /builder/projects/{id}/files · GET /builder/projects/{id}/files/{path}[?raw=1]
+            GET /builder/projects/{id}/logs?lines=100
+Uploads     POST/GET /builder/projects/{id}/assets · DELETE /builder/projects/{id}/assets/{asset_id}
+Versions    GET/POST /builder/projects/{id}/snapshots · POST .../snapshots/{seq}/restore · POST /builder/projects/{id}/undo
+Connectors  GET /connectors · POST /connectors · DELETE /connectors/{id} · GET /connectors/supabase/authorize
+Per project POST/DELETE /builder/projects/{id}/supabase · POST/DELETE .../payments · POST/DELETE .../maps
+Publish     POST /builder/projects/{id}/publish · GET .../publishes · GET .../publishes/{publish_id}
+Usage       GET /builder/projects/{id}/usage
+Health      GET /health (builder block: models, sandbox, storage, secrets, images, publish, supabase_oauth, skills)
+
+CORS: browsers may call every route directly, including the SSE stream, from
+the origins in the backend's CORS_ORIGINS setting (dev default: localhost
+5173, 3000, 3001). Ask for your production origin to be added; do not relay
+the stream through a serverless route, its response cap is shorter than a
+first build.
+
+------------------------------------------------------------------------
 ## 0. Authentication (Decane sign-in, then Vivid tokens)
 
 Identity is Decane's: "Continue with Google" and emailed codes are handled
@@ -38,8 +64,17 @@ no email); pass what Decane gave you so the account gets a name.
 Step 3, use and refresh:
   Authorization: Bearer <access_token> on every request.
   Access tokens last 30 minutes, refresh tokens 30 days.
-  POST /auth/refresh {refresh_token} -> a new pair. On any 401, refresh
-  once and retry the request; if the refresh fails, sign in again.
+  POST /auth/refresh {refresh_token} -> a new pair. Send no Authorization
+  header on this call (a stale bearer is ignored, not required). On any 401
+  elsewhere, refresh once and retry the request. A 401 from /auth/refresh
+  itself carries error.code "refresh_expired": clear the session and sign in
+  again; treat any other status from it (5xx, network) as transient.
+
+API keys, for scripts and CLIs: POST /keys {name} with a session bearer
+-> 201 {id, name, prefix, key, created_at}; the full key is in that
+response only. GET /keys lists {id, name, prefix, created_at, last_used_at};
+DELETE /keys/{id} revokes. A key goes in Authorization: Bearer vivid_... on
+every /v1 route exactly like an access token, and never expires.
   GET /auth/me -> the user; PATCH /auth/me {name} renames.
 
 Store the pair in the client's secure storage (the web app keeps it in
@@ -104,6 +139,9 @@ Project:
   supabase_project_ref: string | null,
   payments_provider: "none" | "paystack",
   maps_provider: "none" | "google",
+  turn_status: "idle" | "running",   // a turn is in flight on the backend (survives your disconnect)
+  turn_started_at: string | null,    // when it started; show "building for 6 min"
+  thumbnail_url: string | null,      // latest desktop screenshot, a 7-day signed URL; for the project card
   fullstack: boolean,             // accounts + server-side data were asked for (plan sets it)
   recipe: string | null,          // design recipe the plan chose (shop, booking, platform, ...)
   published_url: string | null,
@@ -195,7 +233,17 @@ Data parts (custom events):
   {"type":"data-review","data":{"kind":"completeness","round":1}}   first builds: "Checking the app against the spec"
   {"type":"data-critique","data":{"round":1,"broken":false,"screenshots":[{"name":"desktop","width":1280,"url":"..."},{"name":"mobile","width":390,"url":"..."}]}}
         "Looking at the page on desktop and phone"; the URLs are time-limited (7 days) and safe to show as thumbnails. broken=true means the page crashed and the model is fixing it first.
-  {"type":"data-usage","data":{"model":"...","steps":12,"tokens_in":..,"tokens_out":..,"reason":"answered"|"step_limit"|"typecheck_strikes"|"cancelled"|"error","mode"?:"plan"}}
+  {"type":"data-usage","data":{"model":"...","steps":12,"tokens_in":..,"tokens_out":..,
+      "reason": <see below>, "ok": boolean, "failed_tools": ["write_file src/pages/Deal.tsx"], "mode"?:"plan"}}
+      reason is a closed set. ok=true (the turn ended the way it meant to):
+        answered (build/edit), asked (plan: questions are on the stream), spec_written (plan).
+      ok=false: step_limit, typecheck_strikes, no_changes (a first build that wrote no
+        files, after a push to build), cancelled, error. Branch on `ok`, and show `reason`
+        only when it is false; new reasons will arrive with ok=false, so a client that
+        branches on ok never mislabels a success.
+      failed_tools lists tool calls whose arguments the model produced malformed (the
+        backend asks the model to redo each one on the next step); if one is still there
+        at the end, name it to the user: "src/pages/Deal.tsx was never written".
   {"type":"data-snapshot","data":{"id":"...","seq":3}}            after finish: a new version exists; refresh the versions list
 
 Control:
@@ -204,8 +252,26 @@ Control:
   {"type":"error","errorText":"..."}       the turn failed; the stream still ends with finish and [DONE]
   {"type":"abort","reason":"cancelled by the user"}
 
-The assistant message is stored before `[DONE]` is sent, so fetching
-messages right after the stream ends is safe.
+The turn runs as a task on the backend, independent of your connection:
+closing the tab, a proxy timeout or a lost network does not stop it and
+does not lose its message. The assistant message is stored before `[DONE]`
+is sent, so fetching messages right after the stream ends is safe. To
+stop a turn, POST .../cancel; a cancelled turn still stores what it
+produced. While a turn runs, Project.turn_status is "running" and every
+new POST .../chat answers 409 busy.
+
+Reconnecting: GET /builder/projects/{id}/chat/stream replays every part the
+running turn has produced so far, then follows it live to [DONE]. 204 means
+no turn is running: fetch the thread. Use it on page load whenever
+turn_status is "running", and after any stream error mid-turn.
+
+Wire versus stored names: on the wire the parts are start-step,
+tool-input-available and tool-output-available; once folded (by useChat and
+in GET /messages) a tool call is one part of type "tool-<name>" with a
+`state` field, and start-step is "step-start". The brief of a plan turn
+arrives both as streamed text and in data-brief; render one of them.
+POST .../build only flips mode to "build"; the first build turn is a normal
+POST .../chat ("Build it.").
 
 ### What to show during a build turn
 
@@ -284,7 +350,10 @@ alive; sandboxes die after 10 idle minutes and come back from the latest
 snapshot, so a stale iframe should be reloaded from a fresh preview call.
 
 GET /builder/projects/{id}/files              -> {files: string[]}
-GET /builder/projects/{id}/files/{path}       -> {path, content}
+GET /builder/projects/{id}/files/{path}       -> {path, content, binary, content_base64, content_type}
+     text files: content is the text. Binary files (images, fonts, pdf, archives, or any
+     file with NUL bytes): content is "" and binary=true with the bytes in content_base64.
+     ?raw=1 answers the actual bytes with the right Content-Type (use it for <img src>).
 For a read-only code viewer (developers). Paths are project-relative.
 
 ### Runtime errors from the preview, and "Fix this"
@@ -294,6 +363,7 @@ console. The app template relays errors instead: every uncaught error and
 unhandled promise rejection in the preview is posted to the parent window:
 
   window.addEventListener("message", (e) => {
+    if (e.origin !== new URL(previewUrl).origin) return;   // only the preview may report
     if (e.data?.type === "vivid:error") show(e.data.message, e.data.stack);
   });
 

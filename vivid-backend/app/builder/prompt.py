@@ -17,7 +17,9 @@ the moment a file is saved.
 - Entry: src/main.tsx renders src/App.tsx. Global styles and theme tokens: src/index.css.
 - UI primitives in src/components/ui: button, card, input, dialog, dropdown-menu, \
 tabs, badge, sonner (toasts). Import them as `@/components/ui/<name>`; `@/` maps to src/.
-- Icons: lucide-react. Class merging: `cn` from `@/lib/utils`.
+- Icons: lucide-react. Class merging: `cn` from `@/lib/utils`. Motion: `gsap` and \
+`motion` (Framer Motion) are installed when the template is current; if an import fails, \
+`npm install gsap motion`.
 - Dark mode is class-based: add or remove `dark` on <html>.
 - No router is installed. For multiple pages either keep state in App.tsx, or \
 install one (`npm install react-router-dom`) with run_command.

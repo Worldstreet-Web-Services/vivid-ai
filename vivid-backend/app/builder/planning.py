@@ -339,7 +339,8 @@ class PlanRunner:
             yield stream.data("spec", {"markdown": self.result.spec_md})
         yield stream.data("usage", {
             "model": self.result.model, "steps": self.result.steps,
-            "reason": self.result.reason, "mode": "plan"})
+            "reason": self.result.reason, "mode": "plan",
+            "ok": self.result.reason in (ASKED, SPEC_WRITTEN, ANSWERED)})
         yield stream.finish()
 
     def _handle(self, call: dict) -> tuple[str, bool]:
