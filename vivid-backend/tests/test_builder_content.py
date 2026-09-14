@@ -125,6 +125,25 @@ def test_the_config_is_patched_once_and_keeps_everything_else():
     assert 'process.env.NODE_ENV === "production"' in out      # never in a build
     assert editor.patch_config(out) is None                    # idempotent
     assert editor.patch_config("export default {}") is None    # unexpected shape, left alone
+    assert 'lastIndexOf("/src/")' in out                       # path known without babel's cwd
+
+
+def test_an_older_plugin_is_replaced_in_place():
+    """A project patched by an earlier backend upgrades on its next start
+    instead of keeping a plugin that no longer works."""
+    current = editor.patch_config(CONFIG)
+    stale = current.replace('const at = file.lastIndexOf("/src/");', "const at = -1;")
+    out = editor.patch_config(stale)
+    assert out is not None and 'lastIndexOf("/src/")' in out
+    assert out.count(editor.BLOCK_START) == 1 and "tailwindcss()" in out
+    assert editor.patch_config(out) is None
+
+    # The very first shape went in without sentinels; it is recognised too.
+    legacy = CONFIG.replace("react()", editor.REACT_CALL).replace(
+        "export default", "// Stamps each JSX element with its location.\nfunction vividSourceLocation() {\n  return { name: \"vivid-source-location\" };\n}\n\nexport default", 1)
+    out = editor.patch_config(legacy)
+    assert out is not None and out.count("function vividSourceLocation") == 1
+    assert editor.BLOCK_START in out and 'lastIndexOf("/src/")' in out
 
 
 def test_the_index_gets_the_editor_script_and_publish_takes_it_out():

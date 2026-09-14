@@ -24,6 +24,10 @@ from app.builder.sandbox.base import Sandbox, SandboxError
 log = logging.getLogger("vivid.builder.editor")
 
 MARKER = "vivid-source-location"
+#: The injected plugin sits between these, so a newer backend can replace
+#: an older plugin in a project that already carries one.
+BLOCK_START = "// vivid:loc-plugin"
+BLOCK_END = "// /vivid:loc-plugin"
 CONFIG = "vite.config.ts"
 INDEX = "index.html"
 SCRIPT_START = "<!-- vivid:editor -->"
@@ -44,10 +48,10 @@ function vividSourceLocation({ types: t }) {
         if (process.env.NODE_ENV === "production") return;
         const node = path.node;
         if (!node.loc) return;
-        const file = String(state.filename || "");
-        const root = String(state.cwd || "");
-        const rel = file.startsWith(root) ? file.slice(root.length + 1) : file;
-        if (!rel.startsWith("src/")) return;
+        const file = String(state.filename || "").split("\\").join("/");
+        const at = file.lastIndexOf("/src/");
+        if (at === -1) return;
+        const rel = file.slice(at + 1);
         for (const attr of node.attributes) {
           if (attr.name && attr.name.name === "data-vivid-loc") return;
         }
@@ -136,10 +140,26 @@ _REACT = re.compile(r"react\(\s*\)")
 _IMPORT_BLOCK = re.compile(r"^(?:import .*?;\s*)+", re.S)
 
 
+BLOCK = f"{BLOCK_START}\n{PLUGIN}\n{BLOCK_END}"
+_BLOCK_RE = re.compile(re.escape(BLOCK_START) + r".*?" + re.escape(BLOCK_END), re.S)
+#: The first shipped plugin went in without sentinels; recognise it so a
+#: sandbox started in that window upgrades instead of staying half-wired.
+_LEGACY_RE = re.compile(r"//[^\n]*Stamps each JSX element.*?\n\}\n", re.S)
+
+
 def patch_config(src: str) -> str | None:
-    """The Vite config with the plugin wired into its `react()` call, or
-    None when it is already there or the config is shaped unexpectedly."""
-    if MARKER in src:
+    """The Vite config with the current plugin wired into its `react()`
+    call, or None when it is already exactly that. A project carrying an
+    older plugin has it replaced in place; anything else in the config is
+    left alone."""
+    if BLOCK in src and REACT_CALL in src:
+        return None
+    for pattern in (_BLOCK_RE, _LEGACY_RE):
+        if pattern.search(src):
+            out = pattern.sub(lambda _: BLOCK + "\n", src, count=1)
+            return out if REACT_CALL in out else _REACT.sub(REACT_CALL, out, count=1)
+    if MARKER in src:                       # hand-edited beyond recognition
+        log.info("vite config carries an unknown stamping plugin; left as it is")
         return None
     if not _REACT.search(src):
         log.info("vite config has no plain react() call; visual editing stays off")
@@ -147,7 +167,7 @@ def patch_config(src: str) -> str | None:
     out = _REACT.sub(REACT_CALL, src, count=1)
     m = _IMPORT_BLOCK.match(out)
     at = m.end() if m else 0
-    return out[:at] + "\n" + PLUGIN + "\n" + out[at:]
+    return out[:at] + "\n" + BLOCK + "\n" + out[at:]
 
 
 def patch_index(src: str) -> str | None:
@@ -195,7 +215,7 @@ async def ensure(sandbox: Sandbox) -> bool:
             if fixed is not None:
                 await sandbox.write_file(path, fixed)
                 log.info("visual editing: patched %s", path)
-            elif path == CONFIG and MARKER not in src:
+            elif path == CONFIG and BLOCK not in src:
                 ok = False
         except SandboxError as e:
             log.warning("visual editing: could not write %s: %s", path, e)

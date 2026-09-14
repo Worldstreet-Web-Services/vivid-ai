@@ -4,6 +4,7 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
 
+// vivid:loc-plugin
 // Stamps each JSX element with "file:line:column" while the dev server is
 // running, so the builder's visual editor can map a click in the preview
 // back to one exact span of source. Never in a production build.
@@ -15,10 +16,10 @@ function vividSourceLocation({ types: t }) {
         if (process.env.NODE_ENV === "production") return;
         const node = path.node;
         if (!node.loc) return;
-        const file = String(state.filename || "");
-        const root = String(state.cwd || "");
-        const rel = file.startsWith(root) ? file.slice(root.length + 1) : file;
-        if (!rel.startsWith("src/")) return;
+        const file = String(state.filename || "").split("\").join("/");
+        const at = file.lastIndexOf("/src/");
+        if (at === -1) return;
+        const rel = file.slice(at + 1);
         for (const attr of node.attributes) {
           if (attr.name && attr.name.name === "data-vivid-loc") return;
         }
@@ -32,6 +33,7 @@ function vividSourceLocation({ types: t }) {
     },
   };
 }
+// /vivid:loc-plugin
 // Behind the E2B proxy the page is served over https on port 443, so the HMR
 // websocket must be told to connect there rather than to :5173. The start
 // script sets VIVID_SANDBOX=e2b; locally the default (same port) is right.
