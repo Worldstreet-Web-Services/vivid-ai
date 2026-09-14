@@ -60,9 +60,11 @@ class FakeSandbox(Sandbox):
 
     async def run(self, cmd: str, timeout: float = 60) -> RunResult:
         self.commands.append(cmd)
-        if "CONFIG_OK" in cmd:                      # the editor's config parse check
-            return RunResult(0, "CONFIG_OK\n", "") if getattr(self, "config_ok", True) \
-                else RunResult(1, "", "Unterminated string literal")
+        if "wc -l <" in cmd:                        # the editor reading the dev log
+            return RunResult(0, "12\n", "")
+        if cmd.startswith("tail -n +"):
+            return RunResult(0, "" if getattr(self, "config_ok", True)
+                             else "[vite] server restart failed\n", "")
         if "tsc --noEmit" in cmd:
             if self.tsc_output:
                 return RunResult(2, self.tsc_output, "")

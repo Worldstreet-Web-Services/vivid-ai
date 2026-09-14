@@ -5,35 +5,44 @@ import tailwindcss from "@tailwindcss/vite";
 
 
 // vivid:loc-plugin
-// Stamps each JSX element with "file:line:column" while the dev server is
-// running, so the builder's visual editor can map a click in the preview
-// back to one exact span of source. Never in a production build.
-function vividSourceLocation({ types: t }) {
+// Gives the builder's visual editor an anchor: while the dev server runs,
+// every element carries the file, line and column it was written at. The
+// dev JSX runtime already knows that (it is what React DevTools shows), so
+// this wraps it rather than parsing anything. `apply: "serve"` keeps it out
+// of every production build.
+function vividSourceLocation() {
+  const VIRTUAL = String.fromCharCode(0) + "vivid-jsx-dev";
+  const REAL = "react/jsx-dev-runtime";
   return {
     name: "vivid-source-location",
-    visitor: {
-      JSXOpeningElement(path, state) {
-        if (process.env.NODE_ENV === "production") return;
-        const node = path.node;
-        if (!node.loc) return;
-        const file = String(state.filename || "");
-        const at = file.lastIndexOf("/src/");
-        if (at === -1) return;
-        const rel = file.slice(at + 1);
-        for (const attr of node.attributes) {
-          if (attr.name && attr.name.name === "data-vivid-loc") return;
-        }
-        node.attributes.unshift(
-          t.jsxAttribute(
-            t.jsxIdentifier("data-vivid-loc"),
-            t.stringLiteral(rel + ":" + node.loc.start.line + ":" + node.loc.start.column)
-          )
-        );
-      },
+    enforce: "pre",
+    apply: "serve",
+    resolveId(source, importer) {
+      if (source !== REAL || importer === VIRTUAL) return null;
+      return VIRTUAL;
+    },
+    load(id) {
+      if (id !== VIRTUAL) return null;
+      return [
+        'import * as runtime from "' + REAL + '";',
+        "export const Fragment = runtime.Fragment;",
+        "export function jsxDEV(type, props, key, isStatic, source, self) {",
+        "  if (source && typeof source.fileName === 'string') {",
+        "    const at = source.fileName.lastIndexOf('/src/');",
+        "    if (at !== -1) {",
+        "      const where = source.fileName.slice(at + 1) + ':' + source.lineNumber",
+        "        + ':' + (source.columnNumber - 1);",
+        "      props = Object.assign({ 'data-vivid-loc': where }, props);",
+        "    }",
+        "  }",
+        "  return runtime.jsxDEV(type, props, key, isStatic, source, self);",
+        "}",
+      ].join(String.fromCharCode(10));
     },
   };
 }
 // /vivid:loc-plugin
+
 
 // Behind the E2B proxy the page is served over https on port 443, so the HMR
 // websocket must be told to connect there rather than to :5173. The start
@@ -41,7 +50,7 @@ function vividSourceLocation({ types: t }) {
 const behindProxy = process.env.VIVID_SANDBOX === "e2b";
 
 export default defineConfig({
-  plugins: [react({ babel: { plugins: [vividSourceLocation] } }), tailwindcss()],
+  plugins: [vividSourceLocation(), react(), tailwindcss()],
   resolve: {
     alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) },
   },

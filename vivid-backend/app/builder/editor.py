@@ -16,10 +16,11 @@ config is patched surgically (the plugin is added to the existing
 Neither piece reaches the published site: the plugin stops at
 NODE_ENV=production, and publish strips the script.
 """
+import asyncio
 import logging
 import re
 
-from app.builder.sandbox.base import Sandbox, SandboxError
+from app.builder.sandbox.base import DEV_LOG, Sandbox, SandboxError
 
 log = logging.getLogger("vivid.builder.editor")
 
@@ -36,38 +37,50 @@ SCRIPT_END = "<!-- /vivid:editor -->"
 #: Added to the dev server's Babel run. It goes in as the first attribute
 #: so that a component spreading {...props} onto its root passes the call
 #: site's location down to the element the user actually clicks.
-PLUGIN = '''
-// Stamps each JSX element with "file:line:column" while the dev server is
-// running, so the builder's visual editor can map a click in the preview
-// back to one exact span of source. Never in a production build.
-function vividSourceLocation({ types: t }) {
+PLUGIN = """
+// Gives the builder's visual editor an anchor: while the dev server runs,
+// every element carries the file, line and column it was written at. The
+// dev JSX runtime already knows that (it is what React DevTools shows), so
+// this wraps it rather than parsing anything. `apply: "serve"` keeps it out
+// of every production build.
+function vividSourceLocation() {
+  const VIRTUAL = String.fromCharCode(0) + "vivid-jsx-dev";
+  const REAL = "react/jsx-dev-runtime";
   return {
     name: "vivid-source-location",
-    visitor: {
-      JSXOpeningElement(path, state) {
-        if (process.env.NODE_ENV === "production") return;
-        const node = path.node;
-        if (!node.loc) return;
-        const file = String(state.filename || "");
-        const at = file.lastIndexOf("/src/");
-        if (at === -1) return;
-        const rel = file.slice(at + 1);
-        for (const attr of node.attributes) {
-          if (attr.name && attr.name.name === "data-vivid-loc") return;
-        }
-        node.attributes.unshift(
-          t.jsxAttribute(
-            t.jsxIdentifier("data-vivid-loc"),
-            t.stringLiteral(rel + ":" + node.loc.start.line + ":" + node.loc.start.column)
-          )
-        );
-      },
+    enforce: "pre",
+    apply: "serve",
+    resolveId(source, importer) {
+      if (source !== REAL || importer === VIRTUAL) return null;
+      return VIRTUAL;
+    },
+    load(id) {
+      if (id !== VIRTUAL) return null;
+      return [
+        'import * as runtime from "' + REAL + '";',
+        "export const Fragment = runtime.Fragment;",
+        "export function jsxDEV(type, props, key, isStatic, source, self) {",
+        "  if (source && typeof source.fileName === 'string') {",
+        "    const at = source.fileName.lastIndexOf('/src/');",
+        "    if (at !== -1) {",
+        "      const where = source.fileName.slice(at + 1) + ':' + source.lineNumber",
+        "        + ':' + (source.columnNumber - 1);",
+        "      props = Object.assign({ 'data-vivid-loc': where }, props);",
+        "    }",
+        "  }",
+        "  return runtime.jsxDEV(type, props, key, isStatic, source, self);",
+        "}",
+      ].join(String.fromCharCode(10));
     },
   };
 }
-'''.strip()
+""".strip()
 
-REACT_CALL = "react({ babel: { plugins: [vividSourceLocation] } })"
+#: How the plugin is wired into the config's plugin list, and the shape the
+#: first version used (a Babel plugin, which the React plugin no longer
+#: runs), so a project carrying that upgrades cleanly.
+WIRED = "vividSourceLocation(), react("
+LEGACY_REACT_CALL = "react({ babel: { plugins: [vividSourceLocation] } })"
 
 #: Turned on by the builder with postMessage({type:"vivid:editor",on:true}).
 #: Until then it does nothing at all, so a published page is unaffected.
@@ -147,24 +160,33 @@ _BLOCK_RE = re.compile(re.escape(BLOCK_START) + r".*?" + re.escape(BLOCK_END), r
 _LEGACY_RE = re.compile(r"//[^\n]*Stamps each JSX element.*?\n\}\n", re.S)
 
 
+def _wire(src: str) -> str:
+    """The config's plugin list with the stamping plugin in front of the
+    React one, whatever shape it was in before."""
+    if LEGACY_REACT_CALL in src:                      # the first, Babel-based shape
+        src = src.replace(LEGACY_REACT_CALL, "react()", 1)
+    if WIRED in src:
+        return src
+    return _REACT.sub("vividSourceLocation(), react()", src, count=1)
+
+
 def patch_config(src: str) -> str | None:
-    """The Vite config with the current plugin wired into its `react()`
-    call, or None when it is already exactly that. A project carrying an
-    older plugin has it replaced in place; anything else in the config is
-    left alone."""
-    if BLOCK in src and REACT_CALL in src:
+    """The Vite config with the current plugin defined and wired in, or
+    None when it is already exactly that. A project carrying an older
+    version has it replaced in place; everything else in the config is left
+    alone, and a config shaped unexpectedly is not touched at all."""
+    if BLOCK in src and WIRED in src:
         return None
     for pattern in (_BLOCK_RE, _LEGACY_RE):
         if pattern.search(src):
-            out = pattern.sub(lambda _: BLOCK + "\n", src, count=1)
-            return out if REACT_CALL in out else _REACT.sub(REACT_CALL, out, count=1)
+            return _wire(pattern.sub(lambda _: BLOCK + "\n", src, count=1))
     if MARKER in src:                       # hand-edited beyond recognition
         log.info("vite config carries an unknown stamping plugin; left as it is")
         return None
     if not _REACT.search(src):
         log.info("vite config has no plain react() call; visual editing stays off")
         return None
-    out = _REACT.sub(REACT_CALL, src, count=1)
+    out = _wire(src)
     m = _IMPORT_BLOCK.match(out)
     at = m.end() if m else 0
     return out[:at] + "\n" + BLOCK + "\n" + out[at:]
@@ -198,25 +220,35 @@ def strip_script(html: str) -> str:
     return html[:start] + html[end:]
 
 
-#: esbuild ships with Vite, so the written config can be parsed straight
-#: away. A config that does not parse stops the dev server restarting,
-#: which would take the preview down for a feature nobody asked for, so it
-#: is put back within the second.
-CHECK_CMD = ("node -e \"const fs=require('fs');require('esbuild')"
-             ".transformSync(fs.readFileSync('" + CONFIG + "','utf8'),{loader:'ts'});"
-             "console.log('CONFIG_OK')\"")
+#: Vite reloads its config on a change and says so in the dev log, so the
+#: dev server is the checker: anything it could not load is put back within
+#: a couple of seconds. No extra tooling to be missing from a sandbox.
+CONFIG_FAILURES = ("restart failed", "failed to load config")
+CONFIG_SETTLE_SECONDS = 2.5
 
 
-async def _config_parses(sandbox: Sandbox) -> bool:
+async def _log_lines(sandbox: Sandbox) -> int:
     try:
-        result = await sandbox.run(CHECK_CMD, timeout=30)
+        result = await sandbox.run(f"wc -l < {DEV_LOG} 2>/dev/null || echo 0", timeout=15)
+        return int((result.stdout or "0").strip() or 0)
+    except (SandboxError, ValueError):
+        return 0
+
+
+async def _config_loaded(sandbox: Sandbox, since: int) -> bool:
+    """Whether Vite took the config we just wrote. Only the lines it added
+    after the write are read, so an older failure is not blamed on us."""
+    await asyncio.sleep(CONFIG_SETTLE_SECONDS)
+    try:
+        result = await sandbox.run(f"tail -n +{since + 1} {DEV_LOG} 2>/dev/null || true", timeout=15)
     except SandboxError as e:
-        log.warning("visual editing: could not check the config (%s)", e)
+        log.warning("visual editing: could not read the dev log (%s)", e)
+        return True                                  # no evidence of harm
+    said = (result.stdout or "").lower()
+    if any(bad in said for bad in CONFIG_FAILURES):
+        log.error("visual editing: the dev server refused the patched config: %s", said[-300:])
         return False
-    if "CONFIG_OK" in (result.stdout or ""):
-        return True
-    log.error("visual editing: the patched config does not parse: %s", (result.output or "")[-300:])
-    return False
+    return True
 
 
 async def ensure(sandbox: Sandbox) -> bool:
@@ -237,8 +269,9 @@ async def ensure(sandbox: Sandbox) -> bool:
                 if path == CONFIG and BLOCK not in src:
                     ok = False
                 continue
+            since = await _log_lines(sandbox) if path == CONFIG else 0
             await sandbox.write_file(path, fixed)
-            if path == CONFIG and not await _config_parses(sandbox):
+            if path == CONFIG and not await _config_loaded(sandbox, since):
                 await sandbox.write_file(path, src)          # exactly as it was
                 log.error("visual editing: config patch reverted for this project")
                 ok = False
