@@ -108,6 +108,29 @@ plan model as pictures so the spec can name them. A client shows the
 upload control next to the chat; the user uploads, then answers the
 question in text ("uploaded the logo and three photos").
 
+## Editing without the model
+
+A content change should not be a code generation. `app/builder/editor.py`
+puts two small things in the app: a Babel plugin that stamps every JSX
+element with `file:line:column` while the dev server runs (never in a
+build), and a script in index.html that turns a click in the preview into
+a `vivid:select` message naming that location. Both are in the template,
+and both are written into older projects when their sandbox starts, so no
+site has to be rebuilt to become editable. Publish strips the script.
+
+`app/builder/content.py` patches one exact span: the element's text child
+or one of a short list of attributes, with braces and angle brackets
+escaped so a value can never become code. Anything that is not a plain
+literal is refused with a sentence the user can act on, and the client
+sends those to the chat instead. The route applies a batch all-or-nothing,
+typechecks, restores the files byte for byte if the typecheck fails, and
+snapshots when it succeeds, so undo covers a visual edit like any turn.
+
+Pictures do not touch the source at all: the bytes at the asset's path are
+replaced, centre-cropped to the old aspect ratio and written in the old
+format (`images.refit`), so a portrait photo dropped on a wide hero fills
+it instead of breaking the layout.
+
 ## Design quality
 
 Three things work together so a first build looks designed, on phones and
@@ -234,6 +257,9 @@ POST /v1/connectors {provider: "paystack", token: "sk_...", public_key: "pk_..."
 POST   /v1/builder/projects/{id}/payments   -> project (payments_provider: paystack)
 DELETE /v1/builder/projects/{id}/payments
 POST   /v1/builder/projects/{id}/maps       -> project (maps_provider: google)
+POST   /v1/builder/projects/{id}/content    {edits:[{loc,value,kind?,attr?,expect?}]} -> applied/refused (no model)
+PUT    /v1/builder/projects/{id}/assets/{asset_id}   swap a picture, same path and shape
+POST   /v1/builder/projects/{id}/assets/{asset_id}/regenerate {prompt, kind?}
 POST   /v1/builder/projects/{id}/chain      -> project (chain: ark-devnet, deployer_address); DELETE turns it off
 POST   /v1/builder/projects/{id}/chain/faucet
 DELETE /v1/builder/projects/{id}/maps

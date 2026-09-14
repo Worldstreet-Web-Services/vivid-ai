@@ -1048,3 +1048,151 @@ def test_the_plan_can_turn_the_chain_on(client, monkeypatch, fake_manager):
     client.post(f"/v1/builder/projects/{pid}/chat", json={"text": "a loyalty token dapp"})
     proj = client.get(f"/v1/builder/projects/{pid}").json()
     assert proj["chain"] == "ark-devnet" and chain_mod.is_address(proj["deployer_address"])
+
+
+CARD = """export function Card() {
+  return (
+    <section className="card">
+      <h2>Hot food from Lagos kitchens</h2>
+      <p>Delivered in 30 to 50 minutes.</p>
+      <img src="/uploads/hero.png" alt="A rider" />
+    </section>
+  );
+}
+"""
+
+
+def test_content_edits_apply_typecheck_and_make_a_version(client, monkeypatch, fake_manager, fake_blob):
+    """Words on a built page change with no model call: the file is patched
+    at the exact spot, the typecheck runs, and the batch becomes a version
+    so undo works on it."""
+    pid = client.post("/v1/builder/projects", json={"skip_plan": True}).json()["id"]
+    sb = fake_manager.sandbox
+    sb.files["src/Card.tsx"] = CARD
+
+    r = client.post(f"/v1/builder/projects/{pid}/content", json={"edits": [
+        {"loc": "src/Card.tsx:4:6", "value": "Hot food, fast", "expect": "Hot food from Lagos kitchens"},
+        {"loc": "src/Card.tsx:6:6", "kind": "attr", "attr": "alt", "value": "A Chopwell rider"},
+    ]})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["applied"] == 2 and body["files"] == ["src/Card.tsx"]
+    assert [x["ok"] for x in body["results"]] == [True, True]
+    assert body["snapshot"]["seq"] == 1
+    assert "<h2>Hot food, fast</h2>" in sb.files["src/Card.tsx"]
+    assert 'alt="A Chopwell rider"' in sb.files["src/Card.tsx"]
+    assert "Delivered in 30 to 50 minutes." in sb.files["src/Card.tsx"]     # nothing else moved
+    assert client.get(f"/v1/builder/projects/{pid}/snapshots").json()[0]["summary"].startswith("Edited")
+
+
+def test_content_edits_are_all_or_nothing(client, monkeypatch, fake_manager, fake_blob):
+    """One bad edit in a batch changes nothing at all, and the reason comes
+    back per edit so the client can send that one to the chat instead."""
+    pid = client.post("/v1/builder/projects", json={"skip_plan": True}).json()["id"]
+    sb = fake_manager.sandbox
+    sb.files["src/Card.tsx"] = CARD
+
+    r = client.post(f"/v1/builder/projects/{pid}/content", json={"edits": [
+        {"loc": "src/Card.tsx:4:6", "value": "Changed"},
+        {"loc": "src/Card.tsx:3:4", "value": "Nope"},          # a wrapper, not words
+    ]})
+    assert r.status_code == 422
+    body = r.json()
+    assert body["applied"] == 0 and [x["ok"] for x in body["results"]] == [True, False]
+    assert "holds other elements" in body["results"][1]["error"]
+    assert sb.files["src/Card.tsx"] == CARD                     # untouched
+    assert client.get(f"/v1/builder/projects/{pid}/snapshots").json() == []
+
+
+def test_content_edits_roll_back_when_the_app_stops_compiling(client, monkeypatch, fake_manager, fake_blob):
+    pid = client.post("/v1/builder/projects", json={"skip_plan": True}).json()["id"]
+    sb = fake_manager.sandbox
+    sb.files["src/Card.tsx"] = CARD
+    sb.tsc_output = "src/Card.tsx(4,7): error TS1005: '}' expected."
+
+    r = client.post(f"/v1/builder/projects/{pid}/content",
+                    json={"edits": [{"loc": "src/Card.tsx:4:6", "value": "Changed"}]})
+    assert r.status_code == 422 and "nothing was changed" in r.json()["error"].lower()
+    assert sb.files["src/Card.tsx"] == CARD
+
+
+def test_content_edits_wait_for_a_running_turn(client, fake_manager):
+    pid = client.post("/v1/builder/projects", json={"skip_plan": True}).json()["id"]
+    assert builder_routes.turns.start(pid) is not None
+    r = client.post(f"/v1/builder/projects/{pid}/content",
+                    json={"edits": [{"loc": "src/Card.tsx:4:6", "value": "x"}]})
+    assert r.status_code == 409 and r.json()["error"]["code"] == "busy"
+    builder_routes.turns.finish(pid)
+
+
+def test_replacing_a_picture_keeps_its_path_shape_and_format(client, monkeypatch, fake_manager, fake_blob):
+    """The swap touches no code: same name, same URL, same box, so every
+    page that shows it looks the same but for the picture."""
+    import io
+    from PIL import Image
+    from app.builder import blob as blob_mod
+    monkeypatch.setattr(blob_mod, "presigned_url", lambda key, expires_in=3600: f"https://r2/{key}")
+
+    def jpeg(w, h, colour=(10, 120, 80)):
+        buf = io.BytesIO()
+        Image.new("RGB", (w, h), colour).save(buf, format="JPEG")
+        return buf.getvalue()
+
+    pid = client.post("/v1/builder/projects", json={"skip_plan": True}).json()["id"]
+    fake_manager.fresh = False
+    asset = client.post(f"/v1/builder/projects/{pid}/assets",
+                        files={"file": ("hero.jpg", jpeg(1024, 768), "image/jpeg")}).json()
+    assert asset["meta"] == {"width": 1024, "height": 768}
+    key_before = [k for k in fake_blob if k.endswith("-hero.jpg")][0]
+
+    # A tall photo from a phone, replacing a wide hero.
+    r = client.put(f"/v1/builder/projects/{pid}/assets/{asset['id']}",
+                   files={"file": ("from-phone.png", jpeg(1200, 1600), "image/png")})
+    assert r.status_code == 200, r.text
+    after = r.json()
+    assert after["name"] == "hero.jpg" and after["path"] == "/uploads/hero.jpg"
+    assert after["meta"]["width"] == 1024 and after["meta"]["height"] == 768
+    assert [k for k in fake_blob if k.endswith("-hero.jpg")] == [key_before]
+    written = fake_manager.sandbox.blobs["public/uploads/hero.jpg"]
+    assert written[:3] == b"\xff\xd8\xff" and Image.open(io.BytesIO(written)).size == (1024, 768)
+    assert len(client.get(f"/v1/builder/projects/{pid}/assets").json()) == 1
+
+    r = client.put(f"/v1/builder/projects/{pid}/assets/{asset['id']}",
+                   files={"file": ("notes.txt", b"hello", "text/plain")})
+    assert r.status_code == 400 and r.json()["error"]["code"] == "bad_asset"
+
+
+def test_regenerating_a_picture_uses_one_image_call(client, monkeypatch, fake_manager, fake_blob):
+    import io
+    from PIL import Image
+    from app.builder import blob as blob_mod
+    from app.builder import images as images_mod
+    monkeypatch.setattr(blob_mod, "presigned_url", lambda key, expires_in=3600: f"https://r2/{key}")
+    monkeypatch.setattr(images_mod, "available", lambda: True)
+    asked = {}
+
+    async def render(prompt, kind="photo", ratio="1:1"):
+        asked.update(prompt=prompt, kind=kind, ratio=ratio)
+        buf = io.BytesIO()
+        Image.new("RGB", (2048, 2048), (30, 30, 30)).save(buf, format="JPEG")
+        return buf.getvalue(), "image/jpeg"
+    monkeypatch.setattr(images_mod, "render", render)
+
+    def jpeg(w, h):
+        buf = io.BytesIO()
+        Image.new("RGB", (w, h), (200, 120, 10)).save(buf, format="JPEG")
+        return buf.getvalue()
+
+    pid = client.post("/v1/builder/projects", json={"skip_plan": True}).json()["id"]
+    fake_manager.fresh = False
+    asset = client.post(f"/v1/builder/projects/{pid}/assets",
+                        files={"file": ("dish.jpg", jpeg(1024, 768), "image/jpeg")}).json()
+    r = client.post(f"/v1/builder/projects/{pid}/assets/{asset['id']}/regenerate",
+                    json={"prompt": "jollof rice with grilled chicken", "kind": "photo"})
+    assert r.status_code == 200, r.text
+    assert asked["ratio"] == "4:3" and asked["kind"] == "photo"
+    assert r.json()["meta"]["width"] == 1024 and r.json()["meta"]["height"] == 768
+    assert r.json()["meta"]["prompt"].startswith("jollof rice")
+    assert Image.open(io.BytesIO(fake_manager.sandbox.blobs["public/uploads/dish.jpg"])).size == (1024, 768)
+    usage = client.get(f"/v1/builder/projects/{pid}/usage").json()
+    assert usage["by_kind"]["model"]["events"] == 1

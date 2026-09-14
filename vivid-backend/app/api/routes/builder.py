@@ -49,7 +49,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
-from app.builder import (analytics, assets, blob, chain as chain_mod, images, pgdirect, planning, publish, routing, secrets, skills,
+from app.builder import (analytics, assets, blob, chain as chain_mod, content, editor, images, pgdirect, planning, publish, routing, secrets, skills,
                          snapshots, stream, supabase, tools, usage)
 from app.builder.loop import FEED_DONE, ModelCall, TurnRunner, turns
 from app.builder.planning import PlanRunner
@@ -62,9 +62,10 @@ from app.db.models import (BuilderAsset, BuilderMessage, BuilderProject, Builder
 from app.services.connectors import supabase as supabase_connector
 from app.services.connectors import tokens as connector_tokens
 from app.db.session import async_session
-from app.schemas.builder import (AnalyticsOut, AssetOut, CancelOut, ChatIn, FileOut, FilesOut, MessageOut,
+from app.schemas.builder import (AnalyticsOut, AssetOut, CancelOut, ChatIn, ContentBatchIn,
+                                 ContentEditIn, ContentOut, ContentResultOut, FileOut, FilesOut, MessageOut,
                                  PreviewOut, ProjectCreate, ProjectOut, ProjectUpdate,
-                                 PublishOut, SnapshotOut, SupabaseLinkIn, UsageOut)
+                                 PublishOut, RegenerateIn, SnapshotOut, SupabaseLinkIn, UsageOut)
 from app.services import rate_limit
 from app.services.models_gateway import provider
 
@@ -743,6 +744,97 @@ async def upload_asset(project_id: str, request: Request, file: UploadFile = Fil
     return _asset_out(asset)
 
 
+@router.put("/projects/{project_id}/assets/{asset_id}", response_model=AssetOut)
+async def replace_asset(project_id: str, asset_id: str, request: Request,
+                        file: UploadFile = File(...),
+                        user: User = Depends(get_current_user),
+                        db: AsyncSession = Depends(get_db)):
+    """Swap a picture for another without touching the code: the new bytes
+    take the old one's path, format and shape (centre-cropped to the same
+    aspect ratio), so every page that shows it keeps its layout and nothing
+    in the app has to be rebuilt."""
+    project = await _owned(project_id, user, db)
+    if turns.running(project_id):
+        raise APIError(409, "busy", "Wait for the running turn to finish first.")
+    asset = await db.get(BuilderAsset, asset_id)
+    if asset is None or asset.project_id != project_id:
+        raise APIError(404, "not_found", "No such file")
+    data = await file.read()
+    if not data:
+        raise APIError(400, "bad_asset", "That file is empty.")
+    if len(data) > settings.BUILDER_ASSET_MAX_BYTES:
+        raise APIError(400, "bad_asset",
+                       f"That file is over {settings.BUILDER_ASSET_MAX_BYTES // 1_000_000} MB.")
+    meta = asset.meta or {}
+    dims: dict = {}
+    if asset.mime in images.REFITTABLE:
+        data, _ = images.refit(data, asset.mime, meta.get("width"), meta.get("height"))
+        dims = images.dimensions(data)
+        if not dims:                                 # not a picture Pillow could read
+            raise APIError(400, "bad_asset", "That file is not a picture this editor can use.")
+    elif (file.content_type or "").split(";")[0].strip().lower() != asset.mime:
+        raise APIError(400, "bad_asset",
+                       "Replace it with the same kind of file, so the app's links keep working.")
+    try:
+        await blob.put(asset.r2_key, data, asset.mime)
+    except blob.BlobError as e:
+        log.error("asset replacement to the store failed: %s", e)
+        raise APIError(503, "storage_unavailable", "The file could not be stored. Try again.")
+    asset.size_bytes = len(data)
+    asset.meta = {**meta, **dims}
+    await db.commit()
+    await _put_asset_in_sandbox(project_id, asset, data)
+    return _asset_out(asset)
+
+
+@router.post("/projects/{project_id}/assets/{asset_id}/regenerate", response_model=AssetOut)
+async def regenerate_asset(project_id: str, asset_id: str, body: RegenerateIn, request: Request,
+                           user: User = Depends(get_current_user),
+                           db: AsyncSession = Depends(get_db)):
+    """A new picture for the same slot, from a description. One image call,
+    no code model, and the result takes the old picture's path and shape."""
+    await _owned(project_id, user, db)
+    if turns.running(project_id):
+        raise APIError(409, "busy", "Wait for the running turn to finish first.")
+    asset = await db.get(BuilderAsset, asset_id)
+    if asset is None or asset.project_id != project_id:
+        raise APIError(404, "not_found", "No such file")
+    if asset.mime not in images.REFITTABLE:
+        raise APIError(400, "bad_asset", "Only pictures can be generated again.")
+    if not images.available():
+        raise APIError(503, "not_configured", "Picture generation is not configured.")
+    meta = asset.meta or {}
+    try:
+        data, _ = await images.render(body.prompt, body.kind,
+                                      images.ratio_for(meta.get("width"), meta.get("height")))
+    except images.ImageError as e:
+        raise APIError(400, "bad_request", str(e))
+    data, _ = images.refit(data, asset.mime, meta.get("width"), meta.get("height"))
+    try:
+        await blob.put(asset.r2_key, data, asset.mime)
+    except blob.BlobError as e:
+        raise APIError(503, "storage_unavailable", "The picture could not be stored. Try again.")
+    asset.size_bytes = len(data)
+    asset.meta = {**meta, **images.dimensions(data), "prompt": body.prompt[:300]}
+    await usage.record_images(db, project_id, 1)
+    await db.commit()
+    await _put_asset_in_sandbox(project_id, asset, data)
+    return _asset_out(asset)
+
+
+async def _put_asset_in_sandbox(project_id: str, asset: BuilderAsset, data: bytes) -> None:
+    """The live sandbox gets the new bytes at the same path, so the preview
+    reloads with them. A sandbox that is not running picks them up from the
+    store when it next starts."""
+    sandbox = manager.peek(project_id)
+    if sandbox is None:
+        return
+    try:
+        await assets.write_into(sandbox, asset, data)
+    except SandboxError as e:
+        log.warning("asset %s not written to the live sandbox: %s", asset.name, e)
+
+
 @router.get("/projects/{project_id}/assets", response_model=list[AssetOut])
 async def list_assets(project_id: str, user: User = Depends(get_current_user),
                       db: AsyncSession = Depends(get_db)):
@@ -955,7 +1047,19 @@ async def _start_sandbox(project_id: str, redis):
         await assets.sync(sandbox, uploaded)
     sandbox = await manager.get_or_create(project_id, redis, restore=restore)
     await manager.touch(project_id)
+    if sandbox.id not in _editable:
+        # Once per sandbox: make the preview report what was clicked, for
+        # projects built before visual editing existed as well as new ones.
+        _editable.add(sandbox.id)
+        try:
+            await editor.ensure(sandbox)
+        except Exception as e:                       # never fails a request
+            log.warning("visual editing setup failed for %s: %s", project_id, e)
     return sandbox
+
+
+#: Sandboxes already patched for visual editing, so the files are read once.
+_editable: set[str] = set()
 
 
 async def _sandbox(project_id: str, request: Request):
@@ -1073,6 +1177,101 @@ async def restore_snapshot(project_id: str, seq: int, request: Request,
             await manager.kill(project_id, request.app.state.redis)
     await manager.touch(project_id)
     return row
+
+
+@router.post("/projects/{project_id}/content", response_model=ContentOut)
+async def edit_content(project_id: str, body: ContentBatchIn, request: Request,
+                       response: Response,
+                       user: User = Depends(get_current_user),
+                       db: AsyncSession = Depends(get_db)):
+    """Change the words on a built site without the model.
+
+    Each edit names one element by the location the preview reports. The
+    batch is all or nothing: if any edit cannot be made safely, or the
+    result does not typecheck, the files are put back exactly as they were
+    and nothing reaches the preview. A batch that lands is a new version,
+    so undo works on it like any other change.
+    """
+    project = await _owned(project_id, user, db)
+    if turns.running(project_id):
+        raise APIError(409, "busy", "Wait for the running turn to finish first.")
+    edits = [content.Edit(loc=e.loc, value=e.value, kind=e.kind, attr=e.attr, expect=e.expect)
+             for e in body.edits]
+    order = {id(e): i for i, e in enumerate(edits)}
+    results: list[tuple[int, ContentResultOut]] = []
+
+    def note(edit: content.Edit, ok: bool, error: str | None = None) -> None:
+        results.append((order[id(edit)], ContentResultOut(loc=edit.loc, ok=ok, error=error)))
+
+    try:
+        groups = content.group(edits)
+    except content.ContentError as e:
+        response.status_code = 422
+        return ContentOut(applied=0, error=str(e),
+                          results=[ContentResultOut(loc=x.loc, ok=False, error=str(e)) for x in edits])
+
+    sandbox = await _sandbox(project_id, request)
+    originals: dict[str, str] = {}
+    updated: dict[str, str] = {}
+    refused = False
+    for group in groups:
+        try:
+            src = await sandbox.read_file(group.path)
+        except FileNotFoundError:
+            refused = True
+            for edit in group.edits:
+                note(edit, False, "that file is not part of the app any more")
+            continue
+        originals[group.path] = src
+        current = src
+        for edit in group.edits:
+            try:
+                current = content.apply_one(current, edit)
+                note(edit, True)
+            except content.ContentError as e:
+                refused = True
+                note(edit, False, str(e))
+        updated[group.path] = current
+
+    ordered = [r for _, r in sorted(results, key=lambda pair: pair[0])]
+    if refused:
+        response.status_code = 422
+        return ContentOut(applied=0, results=ordered,
+                          error="Nothing was changed; some of those edits could not be made safely.")
+
+    changed = [path for path, text in updated.items() if text != originals[path]]
+    for path in changed:
+        await sandbox.write_file(path, updated[path])
+    if changed:
+        ok, report = await tools.typecheck(sandbox)
+        if not ok:
+            for path in changed:                      # put it back exactly as it was
+                await sandbox.write_file(path, originals[path])
+            log.warning("content edit on %s rolled back: %s", project_id, report[:300])
+            response.status_code = 422
+            return ContentOut(applied=0, results=ordered,
+                              error="Those edits broke the app, so nothing was changed.")
+    await manager.touch(project_id)
+    snapshot = None
+    if changed:
+        try:
+            snapshot = await snapshots.take(db, sandbox, project, _content_summary(body.edits))
+            await db.commit()
+        except (snapshots.SnapshotError, SandboxError) as e:
+            log.warning("snapshot after a content edit on %s failed: %s", project_id, e)
+    return ContentOut(applied=len(ordered), files=sorted(changed), results=ordered,
+                      snapshot=SnapshotOut.model_validate(snapshot) if snapshot else None)
+
+
+def _content_summary(edits: list[ContentEditIn]) -> str:
+    words = sum(1 for e in edits if e.kind == "text")
+    attrs = len(edits) - words
+    parts = []
+    if words:
+        parts.append(f"{words} text change{'s' if words > 1 else ''}")
+    if attrs:
+        parts.append(f"{attrs} detail{'s' if attrs > 1 else ''}")
+    return "Edited " + " and ".join(parts) if parts else "Edited content"
 
 
 @router.get("/projects/{project_id}/analytics", response_model=AnalyticsOut)

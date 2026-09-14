@@ -26,6 +26,7 @@ import httpx
 from blake3 import blake3
 
 from app.builder.sandbox.base import Sandbox, SandboxError
+from app.builder import editor
 from app.core.config import settings
 from app.services.models_gateway import http
 
@@ -116,6 +117,8 @@ async def build_site(sandbox: Sandbox, project_id: str | None = None) -> BuiltSi
     files = _untar(data)
     if "index.html" not in files:
         raise PublishError("The build produced no index.html.")
+    files["index.html"] = editor.strip_script(
+        files["index.html"].decode("utf-8", errors="replace")).encode("utf-8")
     if project_id:
         files["index.html"] = inject_analytics(files["index.html"], project_id)
     site = BuiltSite(files)

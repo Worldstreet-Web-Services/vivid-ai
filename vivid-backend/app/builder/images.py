@@ -99,6 +99,81 @@ def with_favicon_links(html: str) -> str:
     return tag + html
 
 
+#: Formats a replacement can be written back as, by the mime of the
+#: picture it replaces. The extension must not change: the app's code
+#: points at a path, and a content edit never edits code.
+_PIL_FORMAT = {"image/jpeg": "JPEG", "image/png": "PNG", "image/webp": "WEBP"}
+
+
+def refit(data: bytes, mime: str, width: int | None = None,
+          height: int | None = None) -> tuple[bytes, str]:
+    """A replacement picture shaped like the one it replaces: centre-cropped
+    to the same aspect ratio, resized to the same box, written in the same
+    format. A portrait photo dropped onto a wide hero therefore fills the
+    hero instead of breaking the layout. Falls back to plain compression
+    when the old size is unknown, and returns the bytes untouched when
+    Pillow cannot read them (an SVG, say)."""
+    fmt = _PIL_FORMAT.get(mime)
+    if fmt is None:
+        return data, mime
+    try:
+        from PIL import Image
+        import io
+        img = Image.open(io.BytesIO(data))
+        img.load()
+    except Exception:
+        return data, mime
+    if width and height and width > 0 and height > 0:
+        target = width / height
+        w, h = img.size
+        if abs((w / h) - target) > 0.01:            # crop to the old ratio
+            if (w / h) > target:
+                new_w = int(round(h * target))
+                left = (w - new_w) // 2
+                img = img.crop((left, 0, left + new_w, h))
+            else:
+                new_h = int(round(w / target))
+                top = (h - new_h) // 2
+                img = img.crop((0, top, w, top + new_h))
+        img = img.resize((min(width, MAX_SIDE), max(1, int(round(min(width, MAX_SIDE) / target)))),
+                         Image.LANCZOS)
+    elif max(img.size) > MAX_SIDE:
+        img.thumbnail((MAX_SIDE, MAX_SIDE))
+    if fmt in ("JPEG",) and img.mode not in ("RGB", "L"):
+        img = img.convert("RGB")
+    out = io.BytesIO()
+    if fmt == "PNG":
+        img.save(out, format="PNG", optimize=True)
+    elif fmt == "WEBP":
+        img.save(out, format="WEBP", quality=JPEG_QUALITY, method=4)
+    else:
+        img.save(out, format="JPEG", quality=JPEG_QUALITY, optimize=True, progressive=True)
+    return out.getvalue(), mime
+
+
+#: Pictures the editor can reshape and write back in place.
+REFITTABLE = frozenset(_PIL_FORMAT)
+
+
+def dimensions(data: bytes) -> dict:
+    """{"width", "height"} for a picture, or {} when it cannot be read."""
+    try:
+        from PIL import Image
+        import io
+        with Image.open(io.BytesIO(data)) as img:
+            return {"width": img.width, "height": img.height}
+    except Exception:
+        return {}
+
+
+def ratio_for(width: int | None, height: int | None) -> str:
+    """The named aspect closest to a picture's own shape."""
+    if not width or not height:
+        return "1:1"
+    r = width / height
+    return min(ASPECTS.values(), key=lambda name: abs(r - _RATIO_VALUE[name]))
+
+
 class ImageError(Exception):
     """For the model to read: what went wrong, without a vendor name."""
 
@@ -187,3 +262,20 @@ class ImageMaker:
 
 def available() -> bool:
     return media.image_available()
+
+
+#: The numeric value of each named aspect, for picking the closest one.
+_RATIO_VALUE = {"1:1": 1.0, "4:3": 4 / 3, "16:9": 16 / 9, "3:4": 3 / 4}
+
+
+async def render(prompt: str, kind: str = "photo", ratio: str = "1:1") -> tuple[bytes, str]:
+    """One picture from the image model with the house style applied, for
+    the routes that make a picture outside a turn (replacing one on a built
+    site). Raises ImageError with a sentence for the user."""
+    styled = f"{prompt.strip()}. {STYLES.get(kind, STYLES['photo'])}"
+    try:
+        return await media.generate_image(styled, aspect_ratio=ratio)
+    except media.MediaRejected as e:
+        raise ImageError(f"the image model refused that description: {e.public}")
+    except media.MediaUnavailable as e:
+        raise ImageError(f"the image model is unavailable right now ({e.public})")

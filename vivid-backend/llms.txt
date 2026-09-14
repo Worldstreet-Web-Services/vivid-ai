@@ -27,6 +27,8 @@ Thread      GET /builder/projects/{id}/messages
 Preview     GET /builder/projects/{id}/preview · GET /builder/projects/{id}/files · GET /builder/projects/{id}/files/{path}[?raw=1]
             GET /builder/projects/{id}/logs?lines=100
 Uploads     POST/GET /builder/projects/{id}/assets · DELETE /builder/projects/{id}/assets/{asset_id}
+            PUT /builder/projects/{id}/assets/{asset_id} (swap a picture) · POST .../assets/{asset_id}/regenerate
+Editing     POST /builder/projects/{id}/content (change words on the page, no model)
 Versions    GET/POST /builder/projects/{id}/snapshots · POST .../snapshots/{seq}/restore · POST /builder/projects/{id}/undo
 Connectors  GET /connectors · POST /connectors · DELETE /connectors/{id} · GET /connectors/supabase/authorize
 Per project POST/DELETE /builder/projects/{id}/supabase · POST/DELETE .../payments · POST/DELETE .../maps
@@ -401,6 +403,53 @@ name replaces it. The app serves the file at `path`. Generated images the
 model makes also appear here (that is how a client shows "pictures in this
 project"). Show an upload control next to the chat; in plan mode the model
 asks about pictures and the user uploads before answering.
+
+------------------------------------------------------------------------
+## 7b. Visual editing (change the site without prompting)
+
+Two things a user should never have to write a prompt for: swapping a
+picture and fixing a word. Neither costs a model call, and neither can
+break the app.
+
+The preview does the pointing. Turn it on with
+  iframe.contentWindow.postMessage({type: "vivid:editor", on: true}, "*")
+and the page answers {type:"vivid:editor-state", on, ready}. `ready:false`
+means this project's sandbox has no source locations yet (it was started
+before the feature); reopen the preview and it is patched on start.
+
+While it is on, a click in the preview is swallowed and reported instead:
+  {type:"vivid:select", loc:"src/pages/Home.tsx:42:6", kind:"text"|"image",
+   tag:"p", simple:true, text:"Order now", src:"/uploads/hero.jpg",
+   alt:"A rider", rect:{x,y,w,h}}
+`loc` is the anchor for every edit; `rect` positions your popover; `simple`
+is false when the element wraps other elements, which usually means the
+words are in a child, so let the user click again.
+
+Words and small attributes:
+  POST /builder/projects/{id}/content
+    {edits: [{loc, value, kind?: "text"|"attr", attr?, expect?}]}   (up to 50)
+    -> 200 {applied, files, results:[{loc, ok, error}], snapshot}
+    -> 422 {applied: 0, error, results} and the app is untouched
+  Send `expect` (the text the editor showed) and an edit that no longer
+  matches is refused instead of overwriting. `attr` may be alt, title,
+  placeholder, aria-label, href, src or value.
+  A batch is all or nothing, it typechecks before it commits, and a batch
+  that lands is a new version, so undo (section 8) covers it. 409 busy
+  while a chat turn is running.
+  Expect refusals as normal traffic: "that text comes from the app's data,
+  so it needs a prompt to change" means the words are in a list the app
+  renders, so offer the chat with the text pre-filled.
+
+Pictures, by replacing the file rather than the code:
+  PUT  /builder/projects/{id}/assets/{asset_id}   multipart `file` -> Asset
+       The new picture takes the old one's path, format and box (centre-
+       cropped to the same aspect ratio), so no layout moves and nothing
+       is rebuilt. Match a click's `src` to an asset by its `path`.
+  POST /builder/projects/{id}/assets/{asset_id}/regenerate {prompt, kind?}
+       Same slot, a new picture from the image model (kind: photo,
+       lifestyle, logo, illustration). One image call, no code model.
+Both refuse with 409 busy during a turn, and the live preview reloads on
+its own. Publish afterwards to put the changes on the public URL.
 
 ------------------------------------------------------------------------
 ## 8. Versions

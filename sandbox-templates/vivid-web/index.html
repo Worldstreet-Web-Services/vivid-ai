@@ -30,5 +30,69 @@
       })();
     </script>
     <script type="module" src="/src/main.tsx"></script>
+      <!-- vivid:editor -->
+    <script>
+      (function () {
+        if (window.parent === window) return;
+        var on = false, marked = null;
+        function styleOnce() {
+          if (document.getElementById("vivid-edit-style")) return;
+          var el = document.createElement("style");
+          el.id = "vivid-edit-style";
+          el.textContent = "[data-vivid-hover]{outline:2px solid #0ea5e9!important;outline-offset:2px;cursor:pointer!important}";
+          document.head.appendChild(el);
+        }
+        function anchor(el) {
+          while (el && el !== document.documentElement) {
+            if (el.getAttribute && el.getAttribute("data-vivid-loc")) return el;
+            el = el.parentElement;
+          }
+          return null;
+        }
+        function mark(el) {
+          if (marked === el) return;
+          if (marked) marked.removeAttribute("data-vivid-hover");
+          marked = el;
+          if (marked) marked.setAttribute("data-vivid-hover", "");
+        }
+        function send(msg) { try { window.parent.postMessage(msg, "*"); } catch (_) {} }
+        function describe(el) {
+          var r = el.getBoundingClientRect();
+          var out = {
+            type: "vivid:select",
+            loc: el.getAttribute("data-vivid-loc"),
+            tag: el.tagName.toLowerCase(),
+            simple: el.children.length === 0,
+            rect: { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) }
+          };
+          if (el.tagName === "IMG") {
+            out.kind = "image";
+            out.src = el.getAttribute("src") || "";
+            out.alt = el.getAttribute("alt") || "";
+          } else {
+            out.kind = "text";
+            out.text = (el.textContent || "").replace(/\s+/g, " ").trim().slice(0, 2000);
+          }
+          return out;
+        }
+        document.addEventListener("mousemove", function (e) { if (on) mark(anchor(e.target)); }, true);
+        document.addEventListener("click", function (e) {
+          if (!on) return;
+          e.preventDefault();
+          e.stopPropagation();
+          var el = anchor(e.target);
+          if (el) send(describe(el));
+        }, true);
+        window.addEventListener("message", function (e) {
+          var d = e.data || {};
+          if (d.type !== "vivid:editor") return;
+          on = !!d.on;
+          styleOnce();
+          if (!on) mark(null);
+          send({ type: "vivid:editor-state", on: on, ready: !!document.querySelector("[data-vivid-loc]") });
+        });
+      })();
+    </script>
+<!-- /vivid:editor -->
   </body>
 </html>

@@ -105,6 +105,44 @@ class UsageOut(BaseModel):
     by_kind: dict
 
 
+class ContentEditIn(BaseModel):
+    """One change the visual editor makes: the element at `loc` (from the
+    preview's data-vivid-loc), and what to make of it."""
+    loc: str = Field(max_length=300)
+    value: str = Field(max_length=5000)
+    #: "text" replaces the element's words; "attr" one of its attributes.
+    kind: str = Field(default="text", pattern="^(text|attr)$")
+    attr: str | None = Field(default=None, max_length=40)
+    #: What the editor saw. Given, a change underneath is refused instead
+    #: of overwritten.
+    expect: str | None = Field(default=None, max_length=5000)
+
+
+class ContentBatchIn(BaseModel):
+    edits: list[ContentEditIn] = Field(min_length=1, max_length=50)
+
+
+class ContentResultOut(BaseModel):
+    loc: str
+    ok: bool
+    error: str | None = None
+
+
+class ContentOut(BaseModel):
+    """All or nothing: `applied` is 0 and `results` say why when anything
+    was refused, and the app is exactly as it was."""
+    applied: int
+    files: list[str] = []
+    results: list[ContentResultOut] = []
+    error: str | None = None
+    snapshot: SnapshotOut | None = None
+
+
+class RegenerateIn(BaseModel):
+    prompt: str = Field(min_length=3, max_length=600)
+    kind: str = Field(default="photo", pattern="^(photo|lifestyle|logo|illustration)$")
+
+
 class AnalyticsOut(BaseModel):
     days: int
     pageviews: int

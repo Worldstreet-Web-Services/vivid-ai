@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.builder import pricing
 from app.builder.loop import ModelCall
+from app.core.config import settings
 from app.db.models import BuilderProject, BuilderUsageEvent
 from app.db.session import async_session
 
@@ -30,6 +31,14 @@ async def record_model(db: AsyncSession, project_id: str, calls: list[ModelCall]
                   "prompt_tokens": usage.get("prompt_tokens"),
                   "completion_tokens": usage.get("completion_tokens"),
                   "cached_tokens": (usage.get("prompt_tokens_details") or {}).get("cached_tokens")}))
+
+
+async def record_images(db: AsyncSession, project_id: str, count: int = 1,
+                        stage: str = "edit") -> None:
+    """Pictures made outside a turn (the visual editor regenerating one),
+    priced like any other model call."""
+    db.add(BuilderUsageEvent(project_id=project_id, kind=MODEL, quantity=count, unit="images",
+                             model=settings.OPENROUTER_IMAGE_MODEL, meta={"stage": stage}))
 
 
 async def record_storage(db: AsyncSession, project_id: str, nbytes: int, seq: int) -> None:
