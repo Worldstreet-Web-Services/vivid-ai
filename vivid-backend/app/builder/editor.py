@@ -48,7 +48,7 @@ function vividSourceLocation({ types: t }) {
         if (process.env.NODE_ENV === "production") return;
         const node = path.node;
         if (!node.loc) return;
-        const file = String(state.filename || "").split("\\").join("/");
+        const file = String(state.filename || "");
         const at = file.lastIndexOf("/src/");
         if (at === -1) return;
         const rel = file.slice(at + 1);
@@ -198,10 +198,31 @@ def strip_script(html: str) -> str:
     return html[:start] + html[end:]
 
 
+#: esbuild ships with Vite, so the written config can be parsed straight
+#: away. A config that does not parse stops the dev server restarting,
+#: which would take the preview down for a feature nobody asked for, so it
+#: is put back within the second.
+CHECK_CMD = ("node -e \"const fs=require('fs');require('esbuild')"
+             ".transformSync(fs.readFileSync('" + CONFIG + "','utf8'),{loader:'ts'});"
+             "console.log('CONFIG_OK')\"")
+
+
+async def _config_parses(sandbox: Sandbox) -> bool:
+    try:
+        result = await sandbox.run(CHECK_CMD, timeout=30)
+    except SandboxError as e:
+        log.warning("visual editing: could not check the config (%s)", e)
+        return False
+    if "CONFIG_OK" in (result.stdout or ""):
+        return True
+    log.error("visual editing: the patched config does not parse: %s", (result.output or "")[-300:])
+    return False
+
+
 async def ensure(sandbox: Sandbox) -> bool:
-    """Make the running app editable. True when the preview will stamp
-    locations from now on (a restart of the dev server is not needed: Vite
-    reloads on a config change by itself)."""
+    """Make the running app editable, and leave it exactly as it was if
+    anything about that is not safe. True when the preview will stamp
+    locations from now on; Vite picks up the config change by itself."""
     ok = True
     for path, patch in ((CONFIG, patch_config), (INDEX, patch_index)):
         try:
@@ -212,11 +233,17 @@ async def ensure(sandbox: Sandbox) -> bool:
             continue
         try:
             fixed = patch(src)
-            if fixed is not None:
-                await sandbox.write_file(path, fixed)
-                log.info("visual editing: patched %s", path)
-            elif path == CONFIG and BLOCK not in src:
+            if fixed is None:
+                if path == CONFIG and BLOCK not in src:
+                    ok = False
+                continue
+            await sandbox.write_file(path, fixed)
+            if path == CONFIG and not await _config_parses(sandbox):
+                await sandbox.write_file(path, src)          # exactly as it was
+                log.error("visual editing: config patch reverted for this project")
                 ok = False
+                continue
+            log.info("visual editing: patched %s", path)
         except SandboxError as e:
             log.warning("visual editing: could not write %s: %s", path, e)
             ok = False

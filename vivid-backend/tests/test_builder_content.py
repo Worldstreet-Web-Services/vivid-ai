@@ -154,14 +154,31 @@ def test_the_index_gets_the_editor_script_and_publish_takes_it_out():
     assert editor.strip_script(INDEX) == INDEX
 
 
+def test_the_injected_plugin_carries_no_escapes():
+    """Two layers of quoting once put a lone backslash in the config and
+    stopped the dev server restarting; the plugin has none at all now."""
+    assert "\\" not in editor.PLUGIN and "\\" not in editor.BLOCK
+
+
 async def test_ensure_patches_a_sandbox_that_predates_the_editor():
     sb = FakeSandbox({"vite.config.ts": CONFIG, "index.html": INDEX})
+    sb.config_ok = True
     assert await editor.ensure(sb) is True
     assert editor.MARKER in sb.files["vite.config.ts"] and editor.SCRIPT_START in sb.files["index.html"]
     before = dict(sb.files)
     assert await editor.ensure(sb) is True
     assert sb.files == before                                  # nothing rewritten the second time
     assert await editor.ensure(FakeSandbox({"index.html": INDEX})) is False
+
+
+async def test_a_config_that_would_not_parse_is_never_written():
+    """The check runs in the sandbox before the file moves, because a
+    broken config takes the whole preview down."""
+    sb = FakeSandbox({"vite.config.ts": CONFIG, "index.html": INDEX})
+    sb.config_ok = False
+    assert await editor.ensure(sb) is False
+    assert sb.files["vite.config.ts"] == CONFIG                # put back byte for byte
+    assert editor.SCRIPT_START in sb.files["index.html"]       # the page script is safe on its own
 
 
 # ------------------------------------------------------------------ pictures

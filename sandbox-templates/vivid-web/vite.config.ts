@@ -16,7 +16,7 @@ function vividSourceLocation({ types: t }) {
         if (process.env.NODE_ENV === "production") return;
         const node = path.node;
         if (!node.loc) return;
-        const file = String(state.filename || "").split("\").join("/");
+        const file = String(state.filename || "");
         const at = file.lastIndexOf("/src/");
         if (at === -1) return;
         const rel = file.slice(at + 1);
@@ -34,6 +34,7 @@ function vividSourceLocation({ types: t }) {
   };
 }
 // /vivid:loc-plugin
+
 // Behind the E2B proxy the page is served over https on port 443, so the HMR
 // websocket must be told to connect there rather than to :5173. The start
 // script sets VIVID_SANDBOX=e2b; locally the default (same port) is right.
