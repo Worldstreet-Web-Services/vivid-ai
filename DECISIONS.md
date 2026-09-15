@@ -720,3 +720,48 @@ pins that.
 - A deploy failed because eth-account was installed locally but not
   pinned; now in requirements.txt. Rule kept: every new import gets its
   pin in the same commit.
+
+## 20. Editing a built site without the model (2026-09-15)
+
+"Once they have a website, let them replace an image and edit content
+without prompting, without spoiling site quality."
+
+- Pictures never touch code: `PUT /projects/{id}/assets/{asset_id}`
+  replaces the bytes at the asset's path, centre-cropped to the old aspect
+  ratio and written in the old format (`images.refit`), so no layout moves;
+  `POST .../regenerate {prompt}` does the same from the image model. Both
+  409 while a turn runs.
+- Words: `POST /projects/{id}/content` with edits anchored to
+  `file:line:column`. `app/builder/content.py` replaces one text child or
+  one attribute from a short allow-list, escapes braces and angle brackets
+  so a value cannot become code, and refuses anything that is not a plain
+  literal with a sentence the client can show ("that text comes from the
+  app's data, so it needs a prompt to change"). A batch is all or nothing,
+  typechecked, restored byte for byte on failure, and snapshotted when it
+  lands, so undo covers it.
+- The anchor comes from the preview: `app/builder/editor.py` adds a Vite
+  plugin and a small script to the app, and patches projects that predate
+  both when their sandbox starts (config surgically, index.html by
+  injection; a config the dev server then refuses is put straight back,
+  checked against Vite's own restart log).
+
+Three dead ends worth recording, each cost a live run:
+1. A Babel plugin was the obvious way to stamp elements. `@vitejs/plugin-react`
+   6.1.1 on Vite 8 transforms with Oxc and does not run Babel plugins (there
+   is no @babel/core in the tree at all), so nothing happened. The fix is
+   better anyway: wrap `react/jsx-dev-runtime` through a virtual module and
+   read the source the dev runtime already carries. `apply: "serve"` keeps
+   it out of every build, confirmed with a real `vite build` (no stamps in
+   the bundle).
+2. The runtime's `columnNumber` is 1-based while Babel's is 0-based; the
+   shim subtracts one so the patcher's anchors stay exact.
+3. An escape written one level too few (`"\\"` in a Python string inside a
+   Python string) put a lone backslash in the sandbox's Vite config and
+   stopped the dev server restarting. The injected JS now contains no
+   backslashes at all, a test asserts that, and every config write is
+   verified against the dev log and reverted if Vite refused it.
+
+Proven live on Ọ̀nà Studio: 110 stamped elements, an edit across two files
+applied and typechecked into version 2, the new text and alt text on screen
+afterwards, and a click on a headline rendered from data refused with the
+message the client is meant to show.
